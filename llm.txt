@@ -1,0 +1,127 @@
+# Codex Model Catalog configuration guide for LLMs
+
+Use this guide to generate or update these files:
+
+1. `~/.codex/config.toml`
+2. `~/.codex/model-catalog-routes.json`
+
+Do not edit `~/.codex/model-catalog.json`; the wrapper generates it.
+
+## Required input
+
+Collect these values from the user or the upstream provider documentation:
+
+- Provider ID: local identifier used by both files.
+- Provider name.
+- Base URL.
+- API key placeholder. The user can replace it locally after generation.
+- Codex wire API, normally `responses`.
+- Model ID and display name.
+- Supported reasoning efforts and any required aliases.
+- Context window, input modalities, and tool capabilities.
+
+Do not invent model capabilities. When a capability is unknown, use conservative values: text input only, search disabled, and no image-detail support.
+
+## Provider configuration
+
+Add or merge this table into `~/.codex/config.toml`:
+
+```toml
+[model_providers.<provider_id>]
+name = "<provider_name>"
+base_url = "<base_url>"
+wire_api = "responses"
+request_max_retries = 4
+stream_max_retries = 5
+stream_idle_timeout_ms = 300000
+supports_websockets = false
+experimental_bearer_token = "<api_key>"
+```
+
+Preserve existing Provider tables. Do not set the global `model` or `model_reasoning_effort` unless the user explicitly requests a new default model.
+
+## Model catalog configuration
+
+Add or merge the model into `~/.codex/model-catalog-routes.json` using this schema:
+
+```json
+{
+  "version": 1,
+  "default_provider": "openai",
+  "models": {
+    "<model_id>": {
+      "provider": "<provider_id>",
+      "catalog": {
+        "display_name": "<display_name>",
+        "description": "<provider_name>",
+        "default_reasoning_level": "<default_effort>",
+        "supported_reasoning_levels": [
+          {
+            "effort": "<effort>",
+            "description": "<description>"
+          }
+        ],
+        "input_modalities": [
+          "text"
+        ],
+        "supports_search_tool": false,
+        "web_search_tool_type": "text",
+        "supports_image_detail_original": false
+      },
+      "reasoning_effort_map": {
+        "<codex_effort>": "<upstream_effort>"
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- Keep `version` equal to `1`.
+- Keep `default_provider` equal to `openai` so unconfigured built-in models continue using the ChatGPT subscription.
+- The key under `models` is the model ID. Never add `slug` inside `catalog`.
+- `provider` must exactly match the Provider ID in `config.toml`.
+- `catalog.display_name` is required.
+- `catalog` is a top-level overlay on the native Codex model template. Include every verified capability that differs from that template.
+- Add `context_window` and `max_context_window` only when their positive integer values are verified.
+- `web_search_tool_type` must contain a valid Codex value even when search is disabled; use `text` unless another verified value is required.
+- `reasoning_effort_map` is optional. Omit it when Codex effort names can be forwarded unchanged.
+- If `reasoning_effort_map` is present, it must contain the configured `default_reasoning_level`.
+- Only declare or map `none` when the upstream accepts `reasoning.effort = "none"`.
+- Preserve all existing model entries when adding another model.
+- Produce valid JSON without comments or trailing commas.
+- Never expose an API key outside the configuration output requested by the user.
+
+## `none` and non-thinking compatibility
+
+Treat upstream support and Codex App UI support as separate requirements:
+
+1. The upstream must accept `reasoning.effort = "none"`.
+2. The Codex client must expose `none` as a selectable effort.
+
+The current Codex App filters catalog reasoning efforts through its own UI allowlist and does not show `none` in the model picker by default. For example, a catalog entry containing `none`, `low`, `high`, and `max` may appear as only `low`, `high`, and `max`.
+
+Declaring `none` in `supported_reasoning_levels` and mapping it in `reasoning_effort_map` only ensures that the wrapper forwards `none` correctly when it receives that value. It does not force the App to display a None option.
+
+When generating configuration:
+
+- Do not promise that Non-think will be selectable in Codex App merely because the catalog contains `none`.
+- Do not silently map a visible effort such as `low` to `none`; the UI label would no longer match the upstream behavior.
+- If the upstream provides a separate Non-think model ID or alias, it may be configured as a separate model.
+- Otherwise, state the current UI limitation instead of inventing an unsupported model alias or configuration key.
+
+## Expected output
+
+Return:
+
+1. The complete Provider TOML block.
+2. The complete merged `model-catalog-routes.json` document.
+3. A compatibility note when `none` or Non-think was requested.
+4. The validation command:
+
+```bash
+~/.codex/bin/codex-model-catalog doctor
+```
+
+Do not propose Go code changes for ordinary Provider or model additions.

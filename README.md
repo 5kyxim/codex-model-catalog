@@ -1,0 +1,157 @@
+# Codex Model Catalog
+
+为 Codex App 增加第三方模型，同时保留 ChatGPT 订阅模型。程序只处理 Codex App Server 的 JSONL 路由，不代理模型 HTTP 请求。
+
+支持 Codex `model_providers` 可调用的 Responses API 兼容上游。模型及思考等级由 JSON 配置声明，新增模型不需要修改 Go 代码。
+
+## 安装
+
+前提：已安装 Go；官方 Codex App 位于 `/Applications/Codex.app`，并已完成登录。
+
+在仓库根目录执行：
+
+```bash
+mkdir -p ~/.codex/bin
+go build -trimpath -o ~/.codex/bin/codex-model-catalog ./cmd/codex-model-catalog
+./install-macos-app.sh
+```
+
+脚本会生成并签名 `~/Applications/Codex Model Catalog.app`。它通过 `CODEX_CLI_PATH` 启动官方 Codex App，不会替换 `/Applications/Codex.app`。
+
+## 配置
+
+### 使用 LLM 生成配置
+
+把仓库中的 `llm.txt` 连同上游文档、模型 ID、API 地址和密钥占位符交给任意 LLM：
+
+```text
+阅读 llm.txt，帮我生成或合并 Codex Model Catalog 配置。
+```
+
+它会按当前配置结构输出 `config.toml` Provider 配置和 `model-catalog-routes.json`。生成后运行 `doctor` 校验；不要让它修改自动生成的 `model-catalog.json`。
+
+### 1. Provider
+
+在现有 `~/.codex/config.toml` 中新增或合并 Provider 配置：
+
+```toml
+[model_providers.provider_id]
+name = "Provider Name"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+request_max_retries = 4
+stream_max_retries = 5
+stream_idle_timeout_ms = 300000
+supports_websockets = false
+experimental_bearer_token = "YOUR_API_KEY"
+```
+
+当前 Codex 的 `wire_api` 只支持 `responses`，上游必须兼容 Responses API。
+
+### 2. 模型目录与路由
+
+编辑 `~/.codex/model-catalog-routes.json`：
+
+```json
+{
+  "version": 1,
+  "default_provider": "openai",
+  "models": {
+    "model-id": {
+      "provider": "provider_id",
+      "catalog": {
+        "display_name": "Model Name",
+        "description": "Provider Name",
+        "default_reasoning_level": "high",
+        "supported_reasoning_levels": [
+          {
+            "effort": "high",
+            "description": "Thinking"
+          }
+        ],
+        "input_modalities": [
+          "text"
+        ],
+        "supports_search_tool": false,
+        "web_search_tool_type": "text"
+      },
+      "reasoning_effort_map": {
+        "high": "high",
+        "xhigh": "high"
+      }
+    }
+  }
+}
+```
+
+- `models` 的键就是模型 ID；不要在 `catalog` 中重复写 `slug`。
+- `provider` 必须与 `config.toml` 中的 Provider ID 一致。
+- `catalog` 会覆盖内置模型模板的同名字段，可声明上下文窗口、输入类型和工具能力等模型差异。
+- `reasoning_effort_map` 可选，用于把 Codex 的思考等级映射为上游接受的值；不配置时原样转发。
+- `default_provider` 保持为 `openai`，未配置的内置模型继续使用 ChatGPT 订阅。
+
+不在 `config.toml` 中设置全局 `model`，Codex App 就会继续默认选择内置模型。第三方模型需要手动选择。
+
+### 示例：OpenCode Go
+
+Provider：
+
+```toml
+[model_providers.opencode_go]
+name = "OpenCode Go"
+base_url = "https://opencode.ai/zen/go/v1"
+wire_api = "responses"
+supports_websockets = false
+experimental_bearer_token = "YOUR_API_KEY"
+```
+
+仓库示例包含 DeepSeek V4 Flash 的完整模型条目和思考等级映射。仅在首次配置、目标文件不存在时复制：
+
+```bash
+cp model-catalog-routes.example.json ~/.codex/model-catalog-routes.json
+```
+
+已有配置时请合并 `models`，不要直接覆盖。示例将 `minimal` 映射为 `low`，`medium`、`xhigh` 映射为 `high`，`ultra` 映射为 `max`；同名等级原样转发。
+
+### `none` 与 Non-think
+
+`none` 需要同时满足两层兼容：
+
+1. 上游接受 Responses API 的 `reasoning.effort = "none"`。
+2. Codex 客户端允许用户选择 `none`。
+
+当前测试版本的 Codex App 会再次过滤模型目录中的思考等级，模型选择器默认不显示 `none`。例如目录声明 `none`、`low`、`high`、`max` 时，App 可能只显示 `low`、`high`、`max`。
+
+在 `supported_reasoning_levels` 和 `reasoning_effort_map` 中配置 `none`，只能保证路由程序在收到该值时正确转发，不能强制 Codex App 显示它。不要为了绕过界面限制，擅自把 `low` 映射为 `none`；这会让界面标签与实际行为不一致。如果上游提供独立的 Non-think 模型 ID 或别名，可以把它作为单独模型配置。
+
+## 检查并启动
+
+`doctor` 会校验配置，并生成或刷新 `~/.codex/model-catalog.json`：
+
+```bash
+~/.codex/bin/codex-model-catalog doctor
+```
+
+检查通过后：
+
+1. 按 Command-Q 完全退出正在运行的 Codex App。
+2. 打开 `~/Applications/Codex Model Catalog.app`。
+3. 在新任务的模型选择器中选择内置或第三方模型。
+
+启动器继续使用 Codex 原有的任务列表，内置与第三方 Provider 的历史任务会同时显示。
+
+## 文件
+
+| 路径 | 用途 |
+| --- | --- |
+| `~/.codex/config.toml` | Provider 与可选默认模型 |
+| `~/.codex/model-catalog-routes.json` | 模型目录、路由和思考等级映射 |
+| `~/.codex/model-catalog.json` | `doctor` 或启动时自动生成的完整模型目录，不要手改 |
+| `~/.codex/bin/codex-model-catalog` | Codex App Server 路由程序 |
+| `llm.txt` | 供 LLM 生成或合并配置的规则与模板 |
+
+## 限制
+
+- 一个任务内不能切换 Provider；如需切换，请新建任务，或 fork 后为新任务选择目标模型。fork 不会修改原任务的 Provider。
+- 修改 `model-catalog-routes.json` 不需要重新编译，但需要完全退出并重新打开 `Codex Model Catalog.app`。
+- 当前测试版本的 Codex App 默认不在模型选择器中显示 `none`；模型目录和路由程序支持该值，不代表 App 界面会开放该选项。

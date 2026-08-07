@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "default_provider": "openai",
+  "models": {
+    "deepseek-v4-flash": {
+      "provider": "opencode_go",
+      "catalog": {
+        "display_name": "DeepSeek V4 Flash",
+        "description": "OpenCode Go",
+        "default_reasoning_level": "high",
+        "supported_reasoning_levels": [
+          {
+            "effort": "none",
+            "description": "No thinking"
+          },
+          {
+            "effort": "low",
+            "description": "Low thinking"
+          },
+          {
+            "effort": "high",
+            "description": "Thinking"
+          },
+          {
+            "effort": "max",
+            "description": "Maximum thinking"
+          }
+        ],
+        "shell_type": "shell_command",
+        "visibility": "list",
+        "supported_in_api": true,
+        "priority": 30,
+        "additional_speed_tiers": [],
+        "service_tiers": [],
+        "availability_nux": null,
+        "upgrade": null,
+        "default_reasoning_summary": "none",
+        "support_verbosity": true,
+        "default_verbosity": "low",
+        "apply_patch_tool_type": "freeform",
+        "web_search_tool_type": "text",
+        "supports_parallel_tool_calls": true,
+        "supports_image_detail_original": false,
+        "context_window": 1048576,
+        "max_context_window": 1048576,
+        "comp_hash": "3000",
+        "effective_context_window_percent": 95,
+        "experimental_supported_tools": [],
+        "input_modalities": [
+          "text"
+        ],
+        "supports_search_tool": false,
+        "use_responses_lite": false,
+        "tool_mode": null
+      },
+      "reasoning_effort_map": {
+        "none": "none",
+        "minimal": "low",
+        "low": "low",
+        "medium": "high",
+        "high": "high",
+        "xhigh": "high",
+        "max": "max",
+        "ultra": "max"
+      }
+    }
+  }
+}
