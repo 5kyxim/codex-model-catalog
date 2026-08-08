@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type clientAction struct {
@@ -34,6 +35,8 @@ type router struct {
 	bindingRing    []string
 	bindingNext    int
 	bindingLimit   int
+
+	stats *statsStore
 }
 
 func newRouter(cfg catalogConfig) *router {
@@ -49,6 +52,7 @@ func newRouterWithLimit(cfg catalogConfig, limit int) *router {
 		threadBindings: make(map[string]threadBinding),
 		bindingRing:    make([]string, limit),
 		bindingLimit:   limit,
+		stats:          newDefaultStatsStore(),
 	}
 }
 
@@ -140,6 +144,9 @@ func (r *router) routeThreadResume(original []byte, envelope rpcEnvelope) client
 			return r.invalidParams(envelope.ID, providerConflictMessage(model, explicitProvider, targetProvider))
 		}
 	}
+	if threadID != "" && model != "" {
+		r.setThreadBinding(threadID, model, r.cfg.providerFor(model))
+	}
 
 	changed := false
 	effortModel, spec, handlesEffort := r.reasoningSpec(model, explicitProvider, binding)
@@ -195,6 +202,9 @@ func (r *router) routeExistingThread(original []byte, envelope rpcEnvelope) clie
 	if model != "" && knownProvider != "" && r.cfg.providerFor(model) != knownProvider {
 		return r.providerChangeError(envelope.ID, model)
 	}
+	if threadID != "" && model != "" {
+		r.setThreadBinding(threadID, model, r.cfg.providerFor(model))
+	}
 
 	effortModel, spec, handlesEffort := r.reasoningSpec(model, "", binding)
 	if !handlesEffort {
@@ -211,6 +221,18 @@ func (r *router) routeExistingThread(original []byte, envelope rpcEnvelope) clie
 }
 
 func (r *router) observeServerLine(line []byte) {
+	r.observeServerLineAt(line, time.Now())
+}
+
+func (r *router) observeServerLineAt(line []byte, at time.Time) {
+	switch {
+	case bytes.Contains(line, []byte("tokenUsage/updated")):
+		r.observeTokenUsage(line, at)
+		return
+	case bytes.Contains(line, []byte("turn/started")), bytes.Contains(line, []byte("turn/completed")):
+		r.observeTurnEvent(line, at)
+		return
+	}
 	if !bytes.Contains(line, []byte(`"thread"`)) {
 		return
 	}
@@ -222,12 +244,68 @@ func (r *router) observeServerLine(line []byte) {
 	r.observeThreadContainer(envelope.Params)
 }
 
-func (r *router) observeThreadContainer(container threadEventContainer) {
-	thread := container.Thread
-	if thread.ID == "" || (thread.Model == "" && thread.ModelProvider == "") {
+func (r *router) observeTokenUsage(line []byte, at time.Time) {
+	var envelope statsEventEnvelope
+	if json.Unmarshal(line, &envelope) != nil || envelope.Params.TokenUsage == nil {
 		return
 	}
-	r.setThreadBinding(thread.ID, thread.Model, thread.ModelProvider)
+	r.stats.noteMethod("thread/tokenUsage/updated")
+	params := envelope.Params
+	turnID := params.TurnID
+	if turnID == "" {
+		turnID = r.stats.activeTurnFor(params.ThreadID)
+	}
+	if params.ThreadID == "" || turnID == "" {
+		r.stats.noteSkippedUsage()
+		return
+	}
+	r.stats.addUsage(turnKey{threadID: params.ThreadID, turnID: turnID}, params.TokenUsage, at)
+}
+
+func (r *router) observeTurnEvent(line []byte, at time.Time) {
+	var envelope statsEventEnvelope
+	if json.Unmarshal(line, &envelope) != nil {
+		return
+	}
+	r.stats.noteMethod(envelope.Method)
+	params := envelope.Params
+	turnID := params.Turn.ID
+	if turnID == "" {
+		turnID = params.TurnID
+	}
+	if params.ThreadID == "" || turnID == "" {
+		return
+	}
+	key := turnKey{threadID: params.ThreadID, turnID: turnID}
+	switch envelope.Method {
+	case "turn/started":
+		startedAt := at
+		if !params.Turn.StartedAt.IsZero() {
+			startedAt = params.Turn.StartedAt.Time
+		}
+		r.stats.turnStarted(key, startedAt)
+	case "turn/completed":
+		completedAt := at
+		if !params.Turn.CompletedAt.IsZero() {
+			completedAt = params.Turn.CompletedAt.Time
+		}
+		r.stats.turnCompleted(key, params.Turn.Status, r.bindingForThread(params.ThreadID).model, completedAt)
+	}
+}
+
+func (r *router) observeThreadContainer(container threadEventContainer) {
+	thread := container.Thread
+	if thread.ID == "" || (thread.Model == "" && thread.ModelProvider == "" && container.Model == "") {
+		return
+	}
+	if thread.Model != "" {
+		r.setThreadBinding(thread.ID, thread.Model, r.cfg.providerFor(thread.Model))
+	} else if thread.ModelProvider != "" {
+		r.setThreadBinding(thread.ID, "", thread.ModelProvider)
+	}
+	if container.Model != "" && container.Model != thread.Model {
+		r.setThreadBinding(thread.ID, container.Model, r.cfg.providerFor(container.Model))
+	}
 }
 
 // setThreadBinding records a thread's model/provider binding. The binding map
@@ -267,6 +345,7 @@ type threadFields struct {
 
 type threadEventContainer struct {
 	Thread threadFields `json:"thread"`
+	Model  string       `json:"model"`
 }
 
 type serverLineEnvelope struct {

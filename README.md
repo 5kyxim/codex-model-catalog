@@ -140,6 +140,39 @@ cp model-catalog-routes.example.json ~/.codex/model-catalog-routes.json
 
 启动器继续使用 Codex 原有的任务列表，内置与第三方 Provider 的历史任务会同时显示。
 
+## 查看 token 速度统计
+
+启动后 wrapper 会在 `~/.codex/codex-model-catalog.sock` 提供一个本机 unix socket，
+不需要任何 TCP 端口：
+
+```bash
+curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/stats
+```
+
+默认输出按模型分组的 terminal 友好表格；请求头带 `Accept: application/json` 时返回 JSON。
+
+排查事件链路时可以用 `/debug` 查看 wrapper 实际观察到的通知次数：
+
+```bash
+curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/debug
+```
+
+不想起 App、也不想 curl 时，可以直接读盘查看最近 24 小时统计：
+
+```bash
+~/.codex/bin/codex-model-catalog stats
+```
+
+统计设计：
+
+- 保留最近 24 小时、最多 10,000 个已完成回合，落盘到
+  `~/.codex/codex-model-catalog-stats.jsonl`（仅 `0600` 权限），重启不丢；
+- 每列速率是窗口内「输出 token（含 reasoning）总数 ÷ 回合总时长」的合并速率，
+  不是各回合速率的简单平均，避免短回合把数字拉高；
+- 表格同时给出 `15m / 1h / 6h / 24h` 四档速率，以及 24 个一小时的
+  `token/min` sparkline，方便同时看“最近”和“过去一天”的变化；
+- 日志只记录模型、token 数、回合时长和结束时间，不记录 prompt 或输出原文。
+
 ## 文件
 
 | 路径 | 用途 |
@@ -148,6 +181,8 @@ cp model-catalog-routes.example.json ~/.codex/model-catalog-routes.json
 | `~/.codex/model-catalog-routes.json` | 模型目录、路由和思考等级映射 |
 | `~/.codex/model-catalog.json` | `doctor` 或启动时自动生成的完整模型目录，不要手改 |
 | `~/.codex/bin/codex-model-catalog` | Codex App Server 路由程序 |
+| `~/.codex/codex-model-catalog.sock` | 运行时的 token 速度统计 unix socket |
+| `~/.codex/codex-model-catalog-stats.jsonl` | 24 小时统计日志，仅模型/token/时长，不含原文 |
 | `llm.txt` | 供 LLM 生成或合并配置的规则与模板 |
 
 ## 限制

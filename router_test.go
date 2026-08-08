@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testRouter() *router {
@@ -276,6 +277,125 @@ func TestRouterRebindsThreadAfterEviction(t *testing.T) {
 	}
 	if got := router.bindingForThread("thread-3"); got.provider != testProviderID {
 		t.Fatalf("thread-3 binding = %#v", got)
+	}
+}
+
+func TestRouterObservesTokenSpeedEvents(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","result":{"thread":{"id":"thread-1","model":"custom-reasoning-model","modelProvider":"third_party"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress","startedAt":1700000000}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10,"totalTokens":30}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","completedAt":1700000002}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 {
+		t.Fatalf("models = %#v, want one", snapshot.Models)
+	}
+	model := snapshot.Models[0]
+	if model.Model != "custom-reasoning-model" {
+		t.Fatalf("model = %q", model.Model)
+	}
+	if model.Samples != 1 || model.OutputTokens != 30 {
+		t.Fatalf("sample = %#v", model)
+	}
+	if model.TokensPerSecond != 15 {
+		t.Fatalf("tokens per second = %v, want 15", model.TokensPerSecond)
+	}
+}
+
+func TestRouterObservesTokenSpeedWithoutBinding(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":10},"last":{"outputTokens":5}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 || snapshot.Models[0].Model != "unknown" {
+		t.Fatalf("models = %#v, want one unknown model", snapshot.Models)
+	}
+}
+
+func TestRouterBindsModelFromTurnStart(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.clientLine([]byte(`{"jsonrpc":"2.0","id":1,"method":"turn/start","params":{"threadId":"thread-1","model":"custom-reasoning-model","effort":"medium","input":[]}}` + "\n"))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 || snapshot.Models[0].Model != "custom-reasoning-model" {
+		t.Fatalf("models = %#v, want custom-reasoning-model from turn/start", snapshot.Models)
+	}
+}
+
+func TestRouterBindsModelFromResumeResultModel(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1","modelProvider":"third_party"},"model":"custom-reasoning-model"}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 || snapshot.Models[0].Model != "custom-reasoning-model" {
+		t.Fatalf("models = %#v, want custom-reasoning-model from resume result", snapshot.Models)
+	}
+}
+
+func TestRouterObservesTokenUsageWithoutTurnId(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","result":{"thread":{"id":"thread-1","model":"custom-reasoning-model","modelProvider":"third_party"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 {
+		t.Fatalf("models = %#v, want one", snapshot.Models)
+	}
+	model := snapshot.Models[0]
+	if model.Model != "custom-reasoning-model" || model.Samples != 1 || model.OutputTokens != 30 {
+		t.Fatalf("sample = %#v", model)
+	}
+}
+
+func TestRouterSkipsUsageWithoutActiveTurn(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	// Historical/replay usage with no active turn must not create samples.
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20}}}}`+"\n"), base)
+
+	if got := router.stats.debug().SkippedUsageEvents; got != 1 {
+		t.Fatalf("skipped usage events = %d, want 1", got)
+	}
+	if snapshot := router.stats.snapshotAt(base); len(snapshot.Models) != 0 {
+		t.Fatalf("models = %#v, want none", snapshot.Models)
+	}
+}
+
+func TestRouterPassesTokenUsageLinesThrough(t *testing.T) {
+	t.Parallel()
+	line := []byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{}}}` + "\n")
+	router := testRouter()
+	action := router.clientLine(line)
+	if string(action.forward) != string(line) || len(action.reply) != 0 {
+		t.Fatalf("server notification was not passed through: %#v", action)
 	}
 }
 

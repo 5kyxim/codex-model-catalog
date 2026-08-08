@@ -18,6 +18,9 @@ func Run(args []string) int {
 	if len(args) == 1 && args[0] == "doctor" {
 		return doctor(paths)
 	}
+	if len(args) == 1 && args[0] == "stats" {
+		return statsCLI(paths)
+	}
 
 	appServerIndex := indexOf(args, "app-server")
 	if appServerIndex < 0 {
@@ -46,7 +49,28 @@ func Run(args []string) int {
 
 	childArgs := insertCatalogOverride(args, appServerIndex, paths.catalog)
 	fmt.Fprintf(os.Stderr, "codex-model-catalog: routing %d custom model(s); catalog has %d models\n", len(cfg.Models), modelCount)
-	return runAppServer(paths.realCodex, childArgs, newRouter(cfg))
+
+	router := newRouter(cfg)
+	if err := router.stats.useLog(paths.statsLog); err != nil {
+		fmt.Fprintf(os.Stderr, "codex-model-catalog: stats log %s: %v (continuing with in-memory stats)\n", paths.statsLog, err)
+	}
+	statsServer, err := startStatsServer(router.stats, paths.statsSocket)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codex-model-catalog: stats socket %s: %v (stats disabled)\n", paths.statsSocket, err)
+	} else {
+		defer statsServer.Close()
+	}
+	return runAppServer(paths.realCodex, childArgs, router)
+}
+
+func statsCLI(paths paths) int {
+	store := newDefaultStatsStore()
+	if err := store.useLog(paths.statsLog); err != nil {
+		fmt.Fprintf(os.Stderr, "codex-model-catalog: read stats log %s: %v\n", paths.statsLog, err)
+		return 1
+	}
+	fmt.Print(renderStatsText(store.snapshot()))
+	return 0
 }
 
 func doctor(paths paths) int {

@@ -9,11 +9,13 @@ import (
 const defaultRealCodex = "/Applications/Codex.app/Contents/Resources/codex"
 
 type paths struct {
-	codexHome string
-	cache     string
-	catalog   string
-	config    string
-	realCodex string
+	codexHome   string
+	cache       string
+	catalog     string
+	config      string
+	statsSocket string
+	statsLog    string
+	realCodex   string
 }
 
 func defaultPaths() (paths, error) {
@@ -29,10 +31,12 @@ func defaultPaths() (paths, error) {
 	}
 
 	return paths{
-		codexHome: codexHome,
-		cache:     filepath.Join(codexHome, "models_cache.json"),
-		catalog:   filepath.Join(codexHome, "model-catalog.json"),
-		config:    filepath.Join(codexHome, "model-catalog-routes.json"),
-		realCodex: realCodex,
+		codexHome:   codexHome,
+		cache:       filepath.Join(codexHome, "models_cache.json"),
+		catalog:     filepath.Join(codexHome, "model-catalog.json"),
+		config:      filepath.Join(codexHome, "model-catalog-routes.json"),
+		statsSocket: filepath.Join(codexHome, "codex-model-catalog.sock"),
+		statsLog:    filepath.Join(codexHome, "codex-model-catalog-stats.jsonl"),
+		realCodex:   realCodex,
 	}, nil
 }
