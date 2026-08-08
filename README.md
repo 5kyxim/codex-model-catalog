@@ -13,7 +13,7 @@
 ```bash
 mkdir -p ~/.codex/bin
 go build -trimpath -o ~/.codex/bin/codex-model-catalog ./cmd/codex-model-catalog
-./install-macos-app.sh
+./scripts/install-macos-app.sh
 ```
 
 脚本会生成并签名 `~/Applications/Codex Model Catalog.app`。它通过 `CODEX_CLI_PATH` 启动官方 Codex App，不会替换 `/Applications/Codex.app`。
@@ -22,7 +22,7 @@ go build -trimpath -o ~/.codex/bin/codex-model-catalog ./cmd/codex-model-catalog
 
 ### 使用 LLM 生成配置
 
-把仓库中的 `llm.txt` 连同上游文档、模型 ID、API 地址和密钥占位符交给任意 LLM：
+把仓库中的 `docs/llm.txt` 连同上游文档、模型 ID、API 地址和密钥占位符交给任意 LLM：
 
 ```text
 阅读 llm.txt，帮我生成或合并 Codex Model Catalog 配置。
@@ -108,7 +108,7 @@ experimental_bearer_token = "YOUR_API_KEY"
 仓库示例包含 DeepSeek V4 Flash 的完整模型条目和思考等级映射。仅在首次配置、目标文件不存在时复制：
 
 ```bash
-cp model-catalog-routes.example.json ~/.codex/model-catalog-routes.json
+cp examples/model-catalog-routes.example.json ~/.codex/model-catalog-routes.json
 ```
 
 已有配置时请合并 `models`，不要直接覆盖。示例将 `minimal` 映射为 `low`，`medium`、`xhigh` 映射为 `high`，`ultra` 映射为 `max`；同名等级原样转发。
@@ -183,7 +183,7 @@ curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/debug
 | `~/.codex/bin/codex-model-catalog` | Codex App Server 路由程序 |
 | `~/.codex/codex-model-catalog.sock` | 运行时的 token 速度统计 unix socket |
 | `~/.codex/codex-model-catalog-stats.jsonl` | 24 小时统计日志，仅模型/token/时长，不含原文 |
-| `llm.txt` | 供 LLM 生成或合并配置的规则与模板 |
+| `docs/llm.txt` | 供 LLM 生成或合并配置的规则与模板 |
 
 ## 限制
 
