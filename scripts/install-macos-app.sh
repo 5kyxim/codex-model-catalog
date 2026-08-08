@@ -2,7 +2,7 @@
 
 set -eu
 
-app_dir="${CODEX_MODEL_CATALOG_APP_DIR:-$HOME/Applications/Codex Model Catalog.app}"
+app_dir="${CODEX_MODEL_CATALOG_APP_DIR:-$HOME/Applications/Codex Model Launcher.app}"
 wrapper_path="${CODEX_MODEL_CATALOG_WRAPPER:-$HOME/.codex/bin/codex-model-catalog}"
 codex_app="${CODEX_APP_PATH:-/Applications/Codex.app}"
 contents_dir="$app_dir/Contents"
@@ -20,25 +20,25 @@ fi
 
 /bin/mkdir -p "$contents_dir/MacOS"
 
-/bin/cat >"$contents_dir/Info.plist" <<'PLIST'
+/bin/cat >"$contents_dir/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>CFBundleDisplayName</key>
-  <string>Codex Model Catalog</string>
+  <string>Codex Model Launcher</string>
   <key>CFBundleExecutable</key>
   <string>codex-model-catalog-launcher</string>
   <key>CFBundleIdentifier</key>
-  <string>local.codex-model-catalog</string>
+  <string>local.codex-model-launcher</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Codex Model Catalog</string>
+  <string>Codex Model Launcher</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0</string>
+  <string>${CODEX_MODEL_CATALOG_VERSION:-1.0}</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
@@ -59,7 +59,7 @@ codex_app="${CODEX_APP_PATH:-/Applications/Codex.app}"
 codex_process="$codex_app/Contents/MacOS/ChatGPT"
 
 if [[ ! -x "$wrapper_path" ]]; then
-  /usr/bin/osascript -e 'display alert "Codex Model Catalog 不完整" message "找不到可执行的路由程序，请先构建 codex-model-catalog。" as critical buttons {"好"} default button "好"'
+  /usr/bin/osascript -e 'display alert "Codex Model Launcher 不完整" message "找不到可执行的路由程序，请先构建 codex-model-catalog。" as critical buttons {"好"} default button "好"'
   exit 1
 fi
 
@@ -69,7 +69,7 @@ if [[ ! -d "$codex_app" ]]; then
 fi
 
 if /bin/ps -axo comm= | /usr/bin/grep -Fqx "$codex_process"; then
-  /usr/bin/osascript -e 'display alert "请先完全退出 Codex" message "按 Command-Q 完全退出后，再打开 Codex Model Catalog。" buttons {"好"} default button "好"'
+  /usr/bin/osascript -e 'display alert "请先完全退出 Codex" message "按 Command-Q 完全退出后，再打开 Codex Model Launcher。" buttons {"好"} default button "好"'
   exit 1
 fi
 
