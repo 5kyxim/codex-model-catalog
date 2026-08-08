@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 )
 
@@ -20,23 +19,10 @@ type rpcEnvelope struct {
 	Params  json.RawMessage `json:"params"`
 }
 
-type threadBinding struct {
-	model    string
-	provider string
-}
-
-const defaultThreadBindingsLimit = 4096
-
 type router struct {
-	cfg catalogConfig
-
-	mu             sync.RWMutex
-	threadBindings map[string]threadBinding
-	bindingRing    []string
-	bindingNext    int
-	bindingLimit   int
-
-	stats *statsStore
+	cfg      catalogConfig
+	bindings *threadBindings
+	stats    *statsStore
 }
 
 func newRouter(cfg catalogConfig) *router {
@@ -44,16 +30,13 @@ func newRouter(cfg catalogConfig) *router {
 }
 
 func newRouterWithLimit(cfg catalogConfig, limit int) *router {
-	if limit < 1 {
-		limit = 1
+	r := &router{
+		cfg:      cfg,
+		bindings: newThreadBindings(limit),
+		stats:    newDefaultStatsStore(),
 	}
-	return &router{
-		cfg:            cfg,
-		threadBindings: make(map[string]threadBinding),
-		bindingRing:    make([]string, limit),
-		bindingLimit:   limit,
-		stats:          newDefaultStatsStore(),
-	}
+	r.stats.setThreadModelSource(r)
+	return r
 }
 
 func (r *router) clientLine(line []byte) clientAction {
@@ -137,7 +120,7 @@ func (r *router) routeThreadResume(original []byte, envelope rpcEnvelope) client
 	}
 	if model != "" {
 		targetProvider := r.cfg.providerFor(model)
-		if knownProvider != "" && targetProvider != knownProvider {
+		if !r.bindings.stableFor(binding, model, r.cfg) {
 			return r.providerChangeError(envelope.ID, model)
 		}
 		if hasExplicitProvider && explicitProvider != targetProvider {
@@ -145,7 +128,7 @@ func (r *router) routeThreadResume(original []byte, envelope rpcEnvelope) client
 		}
 	}
 	if threadID != "" && model != "" {
-		r.setThreadBinding(threadID, model, r.cfg.providerFor(model))
+		r.bindings.set(threadID, model, r.cfg.providerFor(model))
 	}
 
 	changed := false
@@ -177,18 +160,14 @@ func (r *router) routeThreadFork(original []byte, envelope rpcEnvelope) clientAc
 			return clientAction{forward: original}
 		}
 		threadID, _ := stringValue(params["threadId"])
-		binding := r.bindingForThread(threadID)
-		model = binding.model
-		if model == "" {
-			if inferred, _, ok := r.cfg.uniqueModelForProvider(binding.provider); ok {
-				model = inferred
-			}
-		}
-		if model == "" || binding.provider == "" || r.cfg.providerFor(model) != binding.provider {
+		var inheritedProvider string
+		var ok bool
+		model, inheritedProvider, ok = r.bindings.sourceForFork(threadID, r.cfg)
+		if !ok {
 			return clientAction{forward: original}
 		}
 		params["model"] = model
-		params["modelProvider"] = binding.provider
+		params["modelProvider"] = inheritedProvider
 		changed = true
 	}
 
@@ -218,13 +197,12 @@ func (r *router) routeExistingThread(original []byte, envelope rpcEnvelope) clie
 	}
 	threadID, _ := stringValue(params["threadId"])
 	binding := r.bindingForThread(threadID)
-	knownProvider := binding.provider
 	model := modelFromParams(params)
-	if model != "" && knownProvider != "" && r.cfg.providerFor(model) != knownProvider {
+	if model != "" && !r.bindings.stableFor(binding, model, r.cfg) {
 		return r.providerChangeError(envelope.ID, model)
 	}
 	if threadID != "" && model != "" {
-		r.setThreadBinding(threadID, model, r.cfg.providerFor(model))
+		r.bindings.set(threadID, model, r.cfg.providerFor(model))
 	}
 
 	effortModel, spec, handlesEffort := r.reasoningSpec(model, "", binding)
@@ -246,12 +224,7 @@ func (r *router) observeServerLine(line []byte) {
 }
 
 func (r *router) observeServerLineAt(line []byte, at time.Time) {
-	switch {
-	case bytes.Contains(line, []byte("tokenUsage/updated")):
-		r.observeTokenUsage(line, at)
-		return
-	case bytes.Contains(line, []byte("turn/started")), bytes.Contains(line, []byte("turn/completed")):
-		r.observeTurnEvent(line, at)
+	if r.stats.observeServerLine(line, at) {
 		return
 	}
 	if !bytes.Contains(line, []byte(`"thread"`)) {
@@ -265,97 +238,19 @@ func (r *router) observeServerLineAt(line []byte, at time.Time) {
 	r.observeThreadContainer(envelope.Params)
 }
 
-func (r *router) observeTokenUsage(line []byte, at time.Time) {
-	var envelope statsEventEnvelope
-	if json.Unmarshal(line, &envelope) != nil || envelope.Params.TokenUsage == nil {
-		return
-	}
-	r.stats.noteMethod("thread/tokenUsage/updated")
-	params := envelope.Params
-	turnID := params.TurnID
-	if turnID == "" {
-		turnID = r.stats.activeTurnFor(params.ThreadID)
-	}
-	if params.ThreadID == "" || turnID == "" {
-		r.stats.noteSkippedUsage()
-		return
-	}
-	r.stats.addUsage(turnKey{threadID: params.ThreadID, turnID: turnID}, params.TokenUsage, at)
-}
-
-func (r *router) observeTurnEvent(line []byte, at time.Time) {
-	var envelope statsEventEnvelope
-	if json.Unmarshal(line, &envelope) != nil {
-		return
-	}
-	r.stats.noteMethod(envelope.Method)
-	params := envelope.Params
-	turnID := params.Turn.ID
-	if turnID == "" {
-		turnID = params.TurnID
-	}
-	if params.ThreadID == "" || turnID == "" {
-		return
-	}
-	key := turnKey{threadID: params.ThreadID, turnID: turnID}
-	switch envelope.Method {
-	case "turn/started":
-		startedAt := at
-		if !params.Turn.StartedAt.IsZero() {
-			startedAt = params.Turn.StartedAt.Time
-		}
-		r.stats.turnStarted(key, startedAt)
-	case "turn/completed":
-		completedAt := at
-		if !params.Turn.CompletedAt.IsZero() {
-			completedAt = params.Turn.CompletedAt.Time
-		}
-		r.stats.turnCompleted(key, params.Turn.Status, r.bindingForThread(params.ThreadID).model, completedAt)
-	}
-}
-
 func (r *router) observeThreadContainer(container threadEventContainer) {
 	thread := container.Thread
 	if thread.ID == "" || (thread.Model == "" && thread.ModelProvider == "" && container.Model == "") {
 		return
 	}
 	if thread.Model != "" {
-		r.setThreadBinding(thread.ID, thread.Model, r.cfg.providerFor(thread.Model))
+		r.bindings.set(thread.ID, thread.Model, r.cfg.providerFor(thread.Model))
 	} else if thread.ModelProvider != "" {
-		r.setThreadBinding(thread.ID, "", thread.ModelProvider)
+		r.bindings.set(thread.ID, "", thread.ModelProvider)
 	}
 	if container.Model != "" && container.Model != thread.Model {
-		r.setThreadBinding(thread.ID, container.Model, r.cfg.providerFor(container.Model))
+		r.bindings.set(thread.ID, container.Model, r.cfg.providerFor(container.Model))
 	}
-}
-
-// setThreadBinding records a thread's model/provider binding. The binding map
-// is capped so a long-running app-server session cannot grow without bound;
-// the oldest binding is evicted first. Eviction only weakens the local
-// provider-conflict check for threads not seen in a very long time.
-func (r *router) setThreadBinding(threadID, model, provider string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	binding := r.threadBindings[threadID]
-	if model != "" {
-		binding.model = model
-	}
-	if provider != "" {
-		binding.provider = provider
-	}
-	if _, exists := r.threadBindings[threadID]; exists {
-		r.threadBindings[threadID] = binding
-		return
-	}
-	if len(r.threadBindings) >= r.bindingLimit {
-		if oldest := r.bindingRing[r.bindingNext]; oldest != "" {
-			delete(r.threadBindings, oldest)
-		}
-	}
-	r.threadBindings[threadID] = binding
-	r.bindingRing[r.bindingNext] = threadID
-	r.bindingNext = (r.bindingNext + 1) % r.bindingLimit
 }
 
 type threadFields struct {
@@ -375,9 +270,11 @@ type serverLineEnvelope struct {
 }
 
 func (r *router) bindingForThread(threadID string) threadBinding {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.threadBindings[threadID]
+	return r.bindings.get(threadID)
+}
+
+func (r *router) modelForThread(threadID string) string {
+	return r.bindingForThread(threadID).model
 }
 
 func (r *router) reasoningSpec(model, explicitProvider string, binding threadBinding) (string, modelSpec, bool) {
@@ -413,25 +310,6 @@ func decodeParams(raw json.RawMessage) (map[string]any, error) {
 	return params, nil
 }
 
-func modelFromParams(params map[string]any) string {
-	if collaboration, ok := params["collaborationMode"].(map[string]any); ok {
-		if settings, ok := collaboration["settings"].(map[string]any); ok {
-			if model, ok := stringValue(settings["model"]); ok && model != "" {
-				return model
-			}
-		}
-	}
-	if model, ok := stringValue(params["model"]); ok && model != "" {
-		return model
-	}
-	if config, ok := params["config"].(map[string]any); ok {
-		if model, ok := stringValue(config["model"]); ok && model != "" {
-			return model
-		}
-	}
-	return ""
-}
-
 func ensureProvider(params map[string]any, expected string) (bool, error) {
 	provider, present := nonEmptyStringField(params, "modelProvider")
 	if present {
@@ -450,83 +328,6 @@ func providerConflictMessage(model, actual, expected string) string {
 		return fmt.Sprintf("modelProvider %q conflicts with provider %q", actual, expected)
 	}
 	return fmt.Sprintf("model %q requires modelProvider %q, not %q", model, expected, actual)
-}
-
-func normalizeConfigEffort(params map[string]any, model string, spec modelSpec, useDefault bool) (bool, error) {
-	config, present := params["config"].(map[string]any)
-	if !present {
-		if !useDefault {
-			return false, nil
-		}
-		config = make(map[string]any)
-		params["config"] = config
-	}
-
-	raw, present := config["model_reasoning_effort"]
-	if !present || raw == nil {
-		if !useDefault {
-			return false, nil
-		}
-		defaultEffort, ok := spec.defaultEffort()
-		if !ok {
-			return false, nil
-		}
-		config["model_reasoning_effort"] = defaultEffort
-		return true, nil
-	}
-	value, ok := stringValue(raw)
-	if !ok {
-		return false, fmt.Errorf("reasoning effort for model %q must be a string", model)
-	}
-	normalized, ok := spec.normalizeEffort(value)
-	if !ok {
-		return false, fmt.Errorf("model %q does not support reasoning effort %q", model, value)
-	}
-	if normalized == value {
-		return false, nil
-	}
-	config["model_reasoning_effort"] = normalized
-	return true, nil
-}
-
-func normalizeTurnEffort(params map[string]any, model string, spec modelSpec) (bool, error) {
-	if collaboration, ok := params["collaborationMode"].(map[string]any); ok {
-		if settings, ok := collaboration["settings"].(map[string]any); ok {
-			if raw, present := settings["reasoning_effort"]; present && raw != nil {
-				value, ok := stringValue(raw)
-				if !ok {
-					return false, fmt.Errorf("reasoning effort for model %q must be a string", model)
-				}
-				normalized, ok := spec.normalizeEffort(value)
-				if !ok {
-					return false, fmt.Errorf("model %q does not support reasoning effort %q", model, value)
-				}
-				if normalized != value {
-					settings["reasoning_effort"] = normalized
-					return true, nil
-				}
-			}
-			return false, nil
-		}
-	}
-
-	raw, present := params["effort"]
-	if !present || raw == nil {
-		return false, nil
-	}
-	value, ok := stringValue(raw)
-	if !ok {
-		return false, fmt.Errorf("reasoning effort for model %q must be a string", model)
-	}
-	normalized, ok := spec.normalizeEffort(value)
-	if !ok {
-		return false, fmt.Errorf("model %q does not support reasoning effort %q", model, value)
-	}
-	if normalized == value {
-		return false, nil
-	}
-	params["effort"] = normalized
-	return true, nil
 }
 
 func stringValue(value any) (string, bool) {
