@@ -17,7 +17,10 @@ const (
 	maxReusableLineBuffer = 4 << 20
 )
 
-var errLineTooLong = errors.New("JSONL message exceeds 64 MiB")
+var (
+	errLineTooLong  = errors.New("JSONL message exceeds 64 MiB")
+	errLineStreamed = errors.New("oversized JSONL line streamed")
+)
 
 type lockedWriter struct {
 	mu sync.Mutex
@@ -45,11 +48,26 @@ func writeAll(w io.Writer, data []byte) error {
 }
 
 func readLimitedLine(reader *bufio.Reader, limit int, scratch []byte) ([]byte, error) {
+	return readLine(reader, limit, scratch, nil)
+}
+
+// readLine reads one JSONL line into scratch, enforcing limit. When the line
+// exceeds the limit and oversized is nil, the read fails with errLineTooLong.
+// When oversized is set, the accumulated prefix and over-limit fragment are
+// handed to it for streaming, and readLine reports errLineStreamed so the
+// caller can move on without treating the line as one to process.
+func readLine(reader *bufio.Reader, limit int, scratch []byte, oversized func(prefix, fragment []byte, readErr error) error) ([]byte, error) {
 	line := scratch[:0]
 	for {
 		fragment, err := reader.ReadSlice('\n')
 		if len(line)+len(fragment) > limit {
-			return nil, errLineTooLong
+			if oversized == nil {
+				return nil, errLineTooLong
+			}
+			if streamErr := oversized(line, fragment, err); streamErr != nil {
+				return nil, streamErr
+			}
+			return nil, errLineStreamed
 		}
 		line = append(line, fragment...)
 		switch {
@@ -101,37 +119,21 @@ func pumpClient(input io.Reader, child io.Writer, output *lockedWriter, router *
 func pumpServer(input io.Reader, output *lockedWriter, router *router) error {
 	reader := bufio.NewReaderSize(input, 64<<10)
 	scratch := make([]byte, 0, 64<<10)
+	streamOversized := func(prefix, fragment []byte, readErr error) error {
+		return streamServerLine(reader, output, prefix, fragment, readErr)
+	}
 	for {
-		line := resetLineBuffer(scratch)
-		for {
-			fragment, err := reader.ReadSlice('\n')
-			if len(line)+len(fragment) > serverObserveLimit {
-				if err := streamServerLine(reader, output, line, fragment, err); err != nil {
-					return err
-				}
-				goto nextLine
-			}
-			line = append(line, fragment...)
-			switch {
-			case err == nil:
-				router.observeServerLine(line)
-				if err := output.write(line); err != nil {
-					return fmt.Errorf("write app stdout: %w", err)
-				}
-				goto nextLine
-			case errors.Is(err, bufio.ErrBufferFull):
-				continue
-			case errors.Is(err, io.EOF) && len(line) > 0:
-				router.observeServerLine(line)
-				if err := output.write(line); err != nil {
-					return fmt.Errorf("write app stdout: %w", err)
-				}
-				return io.EOF
-			default:
-				return err
-			}
+		line, err := readLine(reader, serverObserveLimit, resetLineBuffer(scratch), streamOversized)
+		if errors.Is(err, errLineStreamed) {
+			continue
 		}
-	nextLine:
+		if err != nil {
+			return err
+		}
+		router.observeServerLine(line)
+		if err := output.write(line); err != nil {
+			return fmt.Errorf("write app stdout: %w", err)
+		}
 		scratch = line
 	}
 }
