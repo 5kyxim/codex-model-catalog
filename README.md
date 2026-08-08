@@ -10,6 +10,7 @@
   - [一键安装（推荐）](#一键安装推荐)
   - [从 GitHub Release 手动安装](#从-github-release-手动安装)
   - [从源码构建](#从源码构建)
+- [如何工作](#如何工作)
 - [配置](#配置)
   - [使用 LLM 生成配置](#使用-llm-生成配置)
   - [1. Provider](#1-provider)
@@ -65,6 +66,26 @@ go build -trimpath -o ~/.codex/bin/codex-model-catalog ./cmd/codex-model-catalog
 ```
 
 脚本会生成并签名 `~/Applications/Codex Model Launcher.app`。它通过 `CODEX_CLI_PATH` 启动官方 Codex App，不会替换 `/Applications/Codex.app`。
+
+## 如何工作
+
+```text
+Codex Model Launcher.app
+  |  CODEX_CLI_PATH=~/.codex/bin/codex-model-catalog
+  v
+Codex App
+  |  JSONL (stdin/stdout)
+  v
+codex-model-catalog (Go wrapper)
+  |  thread/start 补 modelProvider
+  v
+codex app-server (官方自带)
+  |
+  +-- openai      -> ChatGPT 订阅
+  +-- opencode_go -> OpenCode Go (Responses API)
+```
+
+`codex-model-catalog` 只做 JSONL 路由，不代理模型的 HTTP 请求；`openai` 继续走 ChatGPT 订阅，第三方 provider（如 `opencode_go`）由官方 app-server 直连上游 Responses API。
 
 ## 配置
 
