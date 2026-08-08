@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -150,6 +151,14 @@ type statsStore struct {
 
 	logPath  string
 	logBytes int64
+
+	threadModels threadModelSource
+}
+
+// threadModelSource supplies the model bound to a thread so completed turns
+// can be attributed without the stats store knowing the binding state.
+type threadModelSource interface {
+	modelForThread(threadID string) string
 }
 
 type statsLogRecord struct {
@@ -298,6 +307,80 @@ func (s *statsStore) noteSkippedUsage() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.skippedUsageEvents++
+}
+
+// observeServerLine feeds one app-server JSONL line into the stats store. It
+// reports whether the line was a stats event the store consumed.
+func (s *statsStore) observeServerLine(line []byte, at time.Time) bool {
+	switch {
+	case bytes.Contains(line, []byte("tokenUsage/updated")):
+		s.observeTokenUsage(line, at)
+		return true
+	case bytes.Contains(line, []byte("turn/started")), bytes.Contains(line, []byte("turn/completed")):
+		s.observeTurnEvent(line, at)
+		return true
+	}
+	return false
+}
+
+func (s *statsStore) observeTokenUsage(line []byte, at time.Time) {
+	var envelope statsEventEnvelope
+	if json.Unmarshal(line, &envelope) != nil || envelope.Params.TokenUsage == nil {
+		return
+	}
+	s.noteMethod("thread/tokenUsage/updated")
+	params := envelope.Params
+	turnID := params.TurnID
+	if turnID == "" {
+		turnID = s.activeTurnFor(params.ThreadID)
+	}
+	if params.ThreadID == "" || turnID == "" {
+		s.noteSkippedUsage()
+		return
+	}
+	s.addUsage(turnKey{threadID: params.ThreadID, turnID: turnID}, params.TokenUsage, at)
+}
+
+func (s *statsStore) observeTurnEvent(line []byte, at time.Time) {
+	var envelope statsEventEnvelope
+	if json.Unmarshal(line, &envelope) != nil {
+		return
+	}
+	s.noteMethod(envelope.Method)
+	params := envelope.Params
+	turnID := params.Turn.ID
+	if turnID == "" {
+		turnID = params.TurnID
+	}
+	if params.ThreadID == "" || turnID == "" {
+		return
+	}
+	key := turnKey{threadID: params.ThreadID, turnID: turnID}
+	switch envelope.Method {
+	case "turn/started":
+		startedAt := at
+		if !params.Turn.StartedAt.IsZero() {
+			startedAt = params.Turn.StartedAt.Time
+		}
+		s.turnStarted(key, startedAt)
+	case "turn/completed":
+		completedAt := at
+		if !params.Turn.CompletedAt.IsZero() {
+			completedAt = params.Turn.CompletedAt.Time
+		}
+		s.turnCompleted(key, params.Turn.Status, s.modelForThread(params.ThreadID), completedAt)
+	}
+}
+
+func (s *statsStore) modelForThread(threadID string) string {
+	if s.threadModels == nil {
+		return ""
+	}
+	return s.threadModels.modelForThread(threadID)
+}
+
+func (s *statsStore) setThreadModelSource(source threadModelSource) {
+	s.threadModels = source
 }
 
 type statsDebug struct {

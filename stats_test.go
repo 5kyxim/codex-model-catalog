@@ -78,6 +78,36 @@ func TestStatsDebugCounters(t *testing.T) {
 	}
 }
 
+type fakeThreadModelSource struct {
+	model string
+}
+
+func (s fakeThreadModelSource) modelForThread(threadID string) string {
+	return s.model
+}
+
+func TestStatsStoreObservesServerLine(t *testing.T) {
+	t.Parallel()
+	store := newStatsStore(30*time.Minute, 200)
+	store.setThreadModelSource(fakeThreadModelSource{model: testModelID})
+	base := time.Unix(1700000000, 0)
+
+	if observed := store.observeServerLine([]byte(`{"jsonrpc":"2.0","method":"server/event"}`+"\n"), base); observed {
+		t.Fatal("non-stats line must not be consumed")
+	}
+	store.observeServerLine([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress"}}}`+"\n"), base)
+	store.observeServerLine([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10}}}}`+"\n"), base.Add(time.Second))
+	store.observeServerLine([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","completedAt":1700000002}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := store.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 || snapshot.Models[0].Model != testModelID {
+		t.Fatalf("models = %#v, want attributed %s", snapshot.Models, testModelID)
+	}
+	if snapshot.Models[0].Samples != 1 || snapshot.Models[0].OutputTokens != 30 {
+		t.Fatalf("sample = %#v", snapshot.Models[0])
+	}
+}
+
 func TestStatsDeduplicatesRepeatedUsage(t *testing.T) {
 	t.Parallel()
 	store := newStatsStore(30*time.Minute, 200)
