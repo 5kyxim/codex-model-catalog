@@ -4,6 +4,23 @@
 
 支持 Codex `model_providers` 可调用的 Responses API 兼容上游。模型及思考等级由 JSON 配置声明，新增模型不需要修改 Go 代码。
 
+## 目录
+
+- [安装](#安装)
+  - [一键安装（推荐）](#一键安装推荐)
+  - [从 GitHub Release 手动安装](#从-github-release-手动安装)
+  - [从源码构建](#从源码构建)
+- [配置](#配置)
+  - [使用 LLM 生成配置](#使用-llm-生成配置)
+  - [1. Provider](#1-provider)
+  - [2. 模型目录与路由](#2-模型目录与路由)
+  - [示例：OpenCode Go](#示例opencode-go)
+  - [`none` 与 Non-think](#none-与-non-think)
+- [检查并启动](#检查并启动)
+- [查看 token 速度统计](#查看-token-速度统计)
+- [文件](#文件)
+- [限制](#限制)
+
 ## 安装
 
 前提：官方 Codex App 位于 `/Applications/Codex.app`，并已完成登录。目前仅支持 macOS Apple Silicon（arm64）。
