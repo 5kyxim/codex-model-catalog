@@ -6,7 +6,38 @@
 
 ## 安装
 
-前提：已安装 Go；官方 Codex App 位于 `/Applications/Codex.app`，并已完成登录。
+前提：官方 Codex App 位于 `/Applications/Codex.app`，并已完成登录。目前仅支持 macOS Apple Silicon（arm64）。
+
+### 一键安装（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/5kyxim/codex-model-catalog/main/scripts/install.sh | sh
+```
+
+脚本会下载最新 release 的 arm64 二进制、校验 SHA-256，安装到 `~/.codex/bin/codex-model-catalog`，然后生成并签名 `~/Applications/Codex Model Launcher.app`。
+
+### 从 GitHub Release 手动安装
+
+```bash
+mkdir -p ~/Downloads/codex-model-catalog && cd ~/Downloads/codex-model-catalog
+curl -fsSL -O https://github.com/5kyxim/codex-model-catalog/releases/latest/download/codex-model-catalog_darwin_arm64.tar.gz
+curl -fsSL -O https://github.com/5kyxim/codex-model-catalog/releases/latest/download/checksums.txt
+shasum -a 256 -c checksums.txt
+tar -xzf codex-model-catalog_darwin_arm64.tar.gz
+mkdir -p ~/.codex/bin
+cp codex-model-catalog ~/.codex/bin/
+./scripts/install-macos-app.sh
+```
+
+用浏览器下载的文件会被 macOS 标记 quarantine；用上面的 `curl` 下载不会。如果已经用浏览器下载，先执行：
+
+```bash
+xattr -d com.apple.quarantine ~/.codex/bin/codex-model-catalog
+```
+
+### 从源码构建
+
+前提：已安装 Go。
 
 在仓库根目录执行：
 
@@ -16,7 +47,7 @@ go build -trimpath -o ~/.codex/bin/codex-model-catalog ./cmd/codex-model-catalog
 ./scripts/install-macos-app.sh
 ```
 
-脚本会生成并签名 `~/Applications/Codex Model Catalog.app`。它通过 `CODEX_CLI_PATH` 启动官方 Codex App，不会替换 `/Applications/Codex.app`。
+脚本会生成并签名 `~/Applications/Codex Model Launcher.app`。它通过 `CODEX_CLI_PATH` 启动官方 Codex App，不会替换 `/Applications/Codex.app`。
 
 ## 配置
 
@@ -135,7 +166,7 @@ cp examples/model-catalog-routes.example.json ~/.codex/model-catalog-routes.json
 检查通过后：
 
 1. 按 Command-Q 完全退出正在运行的 Codex App。
-2. 打开 `~/Applications/Codex Model Catalog.app`。
+2. 打开 `~/Applications/Codex Model Launcher.app`。
 3. 在新任务的模型选择器中选择内置或第三方模型。
 
 启动器继续使用 Codex 原有的任务列表，内置与第三方 Provider 的历史任务会同时显示。
@@ -181,6 +212,8 @@ curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/debug
 | `~/.codex/model-catalog-routes.json` | 模型目录、路由和思考等级映射 |
 | `~/.codex/model-catalog.json` | `doctor` 或启动时自动生成的完整模型目录，不要手改 |
 | `~/.codex/bin/codex-model-catalog` | Codex App Server 路由程序 |
+| `scripts/install.sh` | 一键安装脚本：自动下载最新 release 并安装 |
+| `scripts/install-macos-app.sh` | 生成本地 `~/Applications/Codex Model Launcher.app` |
 | `~/.codex/codex-model-catalog.sock` | 运行时的 token 速度统计 unix socket |
 | `~/.codex/codex-model-catalog-stats.jsonl` | 24 小时统计日志，仅模型/token/时长，不含原文 |
 | `docs/llm.txt` | 供 LLM 生成或合并配置的规则与模板 |
@@ -188,5 +221,5 @@ curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/debug
 ## 限制
 
 - 一个任务内不能切换 Provider；如需切换，请新建任务，或 fork 后为新任务选择目标模型。fork 不会修改原任务的 Provider。
-- 修改 `model-catalog-routes.json` 不需要重新编译，但需要完全退出并重新打开 `Codex Model Catalog.app`。
+- 修改 `model-catalog-routes.json` 不需要重新编译，但需要完全退出并重新打开 `Codex Model Launcher.app`。
 - 当前测试版本的 Codex App 默认不在模型选择器中显示 `none`；模型目录和路由程序支持该值，不代表 App 界面会开放该选项。
