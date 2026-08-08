@@ -228,6 +228,87 @@ func TestRouterForkWithConfiguredModelGetsNewBinding(t *testing.T) {
 	}
 }
 
+func TestRouterForkWithoutModelInheritsSourceBinding(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	router.observeServerLine([]byte(`{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"source","modelProvider":"third_party"},"model":"custom-reasoning-model"}}` + "\n"))
+
+	line := []byte(`{"jsonrpc":"2.0","id":2,"method":"thread/fork","params":{"threadId":"source","ephemeral":true}}` + "\n")
+	params := decodeForwarded(t, router.clientLine(line))["params"].(map[string]any)
+	model, _ := stringValue(params["model"])
+	provider, _ := stringValue(params["modelProvider"])
+	// Mirror app-server's global fallback when fork overrides are absent. Before
+	// the fix, this creates an OpenAI side thread whose first custom-model turn
+	// reproduces the provider-change error seen in Desktop.
+	if model == "" {
+		model = "gpt-5.6-sol"
+	}
+	if provider == "" {
+		provider = router.cfg.DefaultProvider
+	}
+
+	response, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"result": map[string]any{
+			"thread": map[string]any{
+				"id":            "side-chat",
+				"modelProvider": provider,
+			},
+			"model": model,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.observeServerLine(append(response, '\n'))
+
+	turn := []byte(`{"jsonrpc":"2.0","id":3,"method":"turn/start","params":{"threadId":"side-chat","model":"custom-reasoning-model","input":[]}}` + "\n")
+	action := router.clientLine(turn)
+	if len(action.reply) != 0 || len(action.forward) == 0 {
+		t.Fatalf("first side-chat turn failed after model-less fork: %s", action.reply)
+	}
+	if model != testModelID || provider != testProviderID {
+		t.Fatalf("fork binding = %s/%s, want %s/%s", provider, model, testProviderID, testModelID)
+	}
+}
+
+func TestRouterForkWithoutModelInfersUniqueProviderModel(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	router.observeServerLine([]byte(`{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"source","modelProvider":"third_party"}}}` + "\n"))
+
+	line := []byte(`{"jsonrpc":"2.0","id":2,"method":"thread/fork","params":{"threadId":"source","ephemeral":true}}` + "\n")
+	params := decodeForwarded(t, router.clientLine(line))["params"].(map[string]any)
+	if params["model"] != testModelID || params["modelProvider"] != testProviderID {
+		t.Fatalf("fork params = %#v, want unique source binding", params)
+	}
+}
+
+func TestRouterForkWithoutModelPreservesUnknownSource(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	line := []byte(`{"jsonrpc":"2.0","id":2,"method":"thread/fork","params":{"threadId":"unknown","ephemeral":true}}` + "\n")
+	action := router.clientLine(line)
+	if string(action.forward) != string(line) || len(action.reply) != 0 {
+		t.Fatalf("unknown source fork was not preserved: %#v", action)
+	}
+}
+
+func TestRouterForkWithoutModelDoesNotGuessSharedProvider(t *testing.T) {
+	t.Parallel()
+	cfg := testCatalogConfig()
+	cfg.Models["alternate-model"] = testModelSpec()
+	router := newRouter(cfg)
+	router.observeServerLine([]byte(`{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"source","modelProvider":"third_party"}}}` + "\n"))
+
+	line := []byte(`{"jsonrpc":"2.0","id":2,"method":"thread/fork","params":{"threadId":"source","ephemeral":true}}` + "\n")
+	action := router.clientLine(line)
+	if string(action.forward) != string(line) || len(action.reply) != 0 {
+		t.Fatalf("ambiguous source fork was not preserved: %#v", action)
+	}
+}
+
 func TestRouterRejectsConflictingExplicitProvider(t *testing.T) {
 	t.Parallel()
 	line := []byte(`{"jsonrpc":"2.0","id":5,"method":"thread/start","params":{"model":"custom-reasoning-model","modelProvider":"openai"}}` + "\n")

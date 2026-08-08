@@ -168,15 +168,36 @@ func (r *router) routeThreadFork(original []byte, envelope rpcEnvelope) clientAc
 		return r.invalidParams(envelope.ID, err.Error())
 	}
 	model := modelFromParams(params)
+	changed := false
 	if model == "" {
-		return clientAction{forward: original}
+		// Desktop side chats fork without model overrides, then apply the source
+		// model on their first turn. Bind the fork up front so its provider stays
+		// stable for the new thread's lifetime.
+		if _, hasProvider := nonEmptyStringField(params, "modelProvider"); hasProvider {
+			return clientAction{forward: original}
+		}
+		threadID, _ := stringValue(params["threadId"])
+		binding := r.bindingForThread(threadID)
+		model = binding.model
+		if model == "" {
+			if inferred, _, ok := r.cfg.uniqueModelForProvider(binding.provider); ok {
+				model = inferred
+			}
+		}
+		if model == "" || binding.provider == "" || r.cfg.providerFor(model) != binding.provider {
+			return clientAction{forward: original}
+		}
+		params["model"] = model
+		params["modelProvider"] = binding.provider
+		changed = true
 	}
 
 	provider := r.cfg.providerFor(model)
-	changed, err := ensureProvider(params, provider)
+	providerChanged, err := ensureProvider(params, provider)
 	if err != nil {
 		return r.invalidParams(envelope.ID, err.Error())
 	}
+	changed = changed || providerChanged
 	if spec, ok := r.cfg.model(model); ok {
 		effortChanged, effortErr := normalizeConfigEffort(params, model, spec, true)
 		if effortErr != nil {
