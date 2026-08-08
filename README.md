@@ -186,6 +186,12 @@ cp examples/model-catalog-routes.example.json ~/.codex/model-catalog-routes.json
 2. 打开 `~/Applications/Codex Model Launcher.app`。
 3. 在新任务的模型选择器中选择内置或第三方模型。
 
+如果在 Finder 的“应用程序”里看不到它，可以直接用命令打开：
+
+```bash
+open ~/Applications/Codex\ Model\ Launcher.app
+```
+
 启动器继续使用 Codex 原有的任务列表，内置与第三方 Provider 的历史任务会同时显示。
 
 ## 查看 token 速度统计
