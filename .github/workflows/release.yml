@@ -1,0 +1,47 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: |
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+            -o dist-stage/codex-model-catalog ./cmd/codex-model-catalog
+
+      - name: Stage release files
+        run: |
+          mkdir -p dist-stage/scripts dist
+          cp scripts/install.sh scripts/install-macos-app.sh dist-stage/scripts/
+          cp README.md LICENSE dist-stage/
+          printf '%s\n' "${GITHUB_REF_NAME#v}" > dist-stage/VERSION
+          tar -C dist-stage -czf dist/codex-model-catalog_darwin_arm64.tar.gz .
+
+      - name: Checksums
+        run: |
+          cd dist
+          shasum -a 256 codex-model-catalog_darwin_arm64.tar.gz > checksums.txt
+
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" dist/codex-model-catalog_darwin_arm64.tar.gz dist/checksums.txt --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
