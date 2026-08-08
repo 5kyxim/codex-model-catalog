@@ -236,6 +236,49 @@ func TestRouterRejectsConflictingExplicitProvider(t *testing.T) {
 	}
 }
 
+func TestRouterEvictsOldestThreadBinding(t *testing.T) {
+	t.Parallel()
+	router := newRouterWithLimit(testCatalogConfig(), 2)
+	observe := func(threadID string) {
+		router.observeServerLine([]byte(`{"jsonrpc":"2.0","result":{"thread":{"id":"` + threadID + `","modelProvider":"third_party"}}}` + "\n"))
+	}
+	observe("thread-1")
+	observe("thread-2")
+	observe("thread-3")
+
+	if got := router.bindingForThread("thread-1"); got.provider != "" {
+		t.Fatalf("thread-1 binding = %#v, want evicted", got)
+	}
+	if got := router.bindingForThread("thread-2"); got.provider != testProviderID {
+		t.Fatalf("thread-2 binding = %#v", got)
+	}
+	if got := router.bindingForThread("thread-3"); got.provider != testProviderID {
+		t.Fatalf("thread-3 binding = %#v", got)
+	}
+}
+
+func TestRouterRebindsThreadAfterEviction(t *testing.T) {
+	t.Parallel()
+	router := newRouterWithLimit(testCatalogConfig(), 2)
+	observe := func(threadID string) {
+		router.observeServerLine([]byte(`{"jsonrpc":"2.0","result":{"thread":{"id":"` + threadID + `","modelProvider":"third_party"}}}` + "\n"))
+	}
+	observe("thread-1")
+	observe("thread-2")
+	observe("thread-3")
+	observe("thread-1")
+
+	if got := router.bindingForThread("thread-1"); got.provider != testProviderID {
+		t.Fatalf("thread-1 binding = %#v, want re-added", got)
+	}
+	if got := router.bindingForThread("thread-2"); got.provider != "" {
+		t.Fatalf("thread-2 binding = %#v, want evicted", got)
+	}
+	if got := router.bindingForThread("thread-3"); got.provider != testProviderID {
+		t.Fatalf("thread-3 binding = %#v", got)
+	}
+}
+
 func decodeForwarded(t *testing.T, action clientAction) map[string]any {
 	t.Helper()
 	if len(action.reply) != 0 {

@@ -11,6 +11,10 @@ import (
 const (
 	clientLineLimit    = 64 << 20
 	serverObserveLimit = 4 << 20
+	// maxReusableLineBuffer caps how much backing array a line buffer may keep
+	// between lines. A single huge line should not pin a large allocation for
+	// the lifetime of the process.
+	maxReusableLineBuffer = 4 << 20
 )
 
 var errLineTooLong = errors.New("JSONL message exceeds 64 MiB")
@@ -40,8 +44,8 @@ func writeAll(w io.Writer, data []byte) error {
 	return nil
 }
 
-func readLimitedLine(reader *bufio.Reader, limit int) ([]byte, error) {
-	line := make([]byte, 0, 64<<10)
+func readLimitedLine(reader *bufio.Reader, limit int, scratch []byte) ([]byte, error) {
+	line := scratch[:0]
 	for {
 		fragment, err := reader.ReadSlice('\n')
 		if len(line)+len(fragment) > limit {
@@ -61,13 +65,24 @@ func readLimitedLine(reader *bufio.Reader, limit int) ([]byte, error) {
 	}
 }
 
+// resetLineBuffer returns scratch cleared for the next JSONL line, or a fresh
+// small buffer when scratch grew unusually large.
+func resetLineBuffer(scratch []byte) []byte {
+	if cap(scratch) > maxReusableLineBuffer {
+		return make([]byte, 0, 64<<10)
+	}
+	return scratch[:0]
+}
+
 func pumpClient(input io.Reader, child io.Writer, output *lockedWriter, router *router) error {
 	reader := bufio.NewReaderSize(input, 64<<10)
+	scratch := make([]byte, 0, 64<<10)
 	for {
-		line, err := readLimitedLine(reader, clientLineLimit)
+		line, err := readLimitedLine(reader, clientLineLimit, resetLineBuffer(scratch))
 		if err != nil {
 			return err
 		}
+		scratch = line
 		action := router.clientLine(line)
 		if len(action.reply) > 0 {
 			if err := output.write(action.reply); err != nil {
@@ -85,8 +100,9 @@ func pumpClient(input io.Reader, child io.Writer, output *lockedWriter, router *
 
 func pumpServer(input io.Reader, output *lockedWriter, router *router) error {
 	reader := bufio.NewReaderSize(input, 64<<10)
+	scratch := make([]byte, 0, 64<<10)
 	for {
-		line := make([]byte, 0, 64<<10)
+		line := resetLineBuffer(scratch)
 		for {
 			fragment, err := reader.ReadSlice('\n')
 			if len(line)+len(fragment) > serverObserveLimit {
@@ -116,6 +132,7 @@ func pumpServer(input io.Reader, output *lockedWriter, router *router) error {
 			}
 		}
 	nextLine:
+		scratch = line
 	}
 }
 

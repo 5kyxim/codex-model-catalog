@@ -24,17 +24,31 @@ type threadBinding struct {
 	provider string
 }
 
+const defaultThreadBindingsLimit = 4096
+
 type router struct {
 	cfg catalogConfig
 
 	mu             sync.RWMutex
 	threadBindings map[string]threadBinding
+	bindingRing    []string
+	bindingNext    int
+	bindingLimit   int
 }
 
 func newRouter(cfg catalogConfig) *router {
+	return newRouterWithLimit(cfg, defaultThreadBindingsLimit)
+}
+
+func newRouterWithLimit(cfg catalogConfig, limit int) *router {
+	if limit < 1 {
+		limit = 1
+	}
 	return &router{
 		cfg:            cfg,
 		threadBindings: make(map[string]threadBinding),
+		bindingRing:    make([]string, limit),
+		bindingLimit:   limit,
 	}
 }
 
@@ -197,35 +211,67 @@ func (r *router) routeExistingThread(original []byte, envelope rpcEnvelope) clie
 }
 
 func (r *router) observeServerLine(line []byte) {
-	var message map[string]any
-	if json.Unmarshal(line, &message) != nil {
+	if !bytes.Contains(line, []byte(`"thread"`)) {
 		return
 	}
-	for _, containerName := range []string{"result", "params"} {
-		container, ok := message[containerName].(map[string]any)
-		if !ok {
-			continue
-		}
-		thread, ok := container["thread"].(map[string]any)
-		if !ok {
-			continue
-		}
-		threadID, _ := stringValue(thread["id"])
-		model, _ := stringValue(thread["model"])
-		provider, _ := stringValue(thread["modelProvider"])
-		if threadID != "" && (model != "" || provider != "") {
-			r.mu.Lock()
-			binding := r.threadBindings[threadID]
-			if model != "" {
-				binding.model = model
-			}
-			if provider != "" {
-				binding.provider = provider
-			}
-			r.threadBindings[threadID] = binding
-			r.mu.Unlock()
+	var envelope serverLineEnvelope
+	if json.Unmarshal(line, &envelope) != nil {
+		return
+	}
+	r.observeThreadContainer(envelope.Result)
+	r.observeThreadContainer(envelope.Params)
+}
+
+func (r *router) observeThreadContainer(container threadEventContainer) {
+	thread := container.Thread
+	if thread.ID == "" || (thread.Model == "" && thread.ModelProvider == "") {
+		return
+	}
+	r.setThreadBinding(thread.ID, thread.Model, thread.ModelProvider)
+}
+
+// setThreadBinding records a thread's model/provider binding. The binding map
+// is capped so a long-running app-server session cannot grow without bound;
+// the oldest binding is evicted first. Eviction only weakens the local
+// provider-conflict check for threads not seen in a very long time.
+func (r *router) setThreadBinding(threadID, model, provider string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	binding := r.threadBindings[threadID]
+	if model != "" {
+		binding.model = model
+	}
+	if provider != "" {
+		binding.provider = provider
+	}
+	if _, exists := r.threadBindings[threadID]; exists {
+		r.threadBindings[threadID] = binding
+		return
+	}
+	if len(r.threadBindings) >= r.bindingLimit {
+		if oldest := r.bindingRing[r.bindingNext]; oldest != "" {
+			delete(r.threadBindings, oldest)
 		}
 	}
+	r.threadBindings[threadID] = binding
+	r.bindingRing[r.bindingNext] = threadID
+	r.bindingNext = (r.bindingNext + 1) % r.bindingLimit
+}
+
+type threadFields struct {
+	ID            string `json:"id"`
+	Model         string `json:"model"`
+	ModelProvider string `json:"modelProvider"`
+}
+
+type threadEventContainer struct {
+	Thread threadFields `json:"thread"`
+}
+
+type serverLineEnvelope struct {
+	Result threadEventContainer `json:"result"`
+	Params threadEventContainer `json:"params"`
 }
 
 func (r *router) bindingForThread(threadID string) threadBinding {
