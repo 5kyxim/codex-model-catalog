@@ -34,6 +34,8 @@ curl -fsSL https://raw.githubusercontent.com/5kyxim/codex-model-catalog/main/scr
 
 脚本会下载最新 release 的 arm64 二进制、校验 SHA-256，安装到 `~/.codex/bin/codex-model-catalog`，然后生成并签名 `~/Applications/Codex Model Launcher.app`。
 
+需要更新时，再次运行上面的安装命令即可；脚本会下载最新 release 并覆盖现有安装。更新后请完全退出并重新打开 `Codex Model Launcher.app`。
+
 ### 从 GitHub Release 手动安装
 
 ```bash
