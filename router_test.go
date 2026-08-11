@@ -402,6 +402,41 @@ func TestRouterObservesTokenSpeedWithoutBinding(t *testing.T) {
 	}
 }
 
+func TestRouterAttributesSubAgentFromExplicitSpawnModel(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/started","params":{"thread":{"id":"child-thread","modelProvider":"third_party"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"collabAgentToolCall","tool":"spawnAgent","senderThreadId":"parent-thread","receiverThreadIds":["child-thread"],"model":"custom-reasoning-model"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"child-thread","turn":{"id":"turn-1","status":"inProgress"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"child-thread","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"child-thread","turn":{"id":"turn-1","status":"completed"}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 || snapshot.Models[0].Model != testModelID {
+		t.Fatalf("models = %#v, want sub-agent model %q", snapshot.Models, testModelID)
+	}
+}
+
+func TestRouterAttributesSubAgentFromInheritedSpawnModel(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","result":{"thread":{"id":"parent-thread","modelProvider":"third_party"},"model":"custom-reasoning-model"}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/started","params":{"thread":{"id":"child-thread","modelProvider":"third_party"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"collabAgentToolCall","tool":"spawnAgent","senderThreadId":"parent-thread","receiverThreadIds":["child-thread"],"model":null}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"child-thread","turn":{"id":"turn-1","status":"inProgress"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"child-thread","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"child-thread","turn":{"id":"turn-1","status":"completed"}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 || snapshot.Models[0].Model != testModelID {
+		t.Fatalf("models = %#v, want inherited sub-agent model %q", snapshot.Models, testModelID)
+	}
+}
+
 func TestRouterBindsModelFromTurnStart(t *testing.T) {
 	t.Parallel()
 	router := testRouter()

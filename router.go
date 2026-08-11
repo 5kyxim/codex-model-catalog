@@ -227,7 +227,7 @@ func (r *router) observeServerLineAt(line []byte, at time.Time) {
 	if r.stats.observeServerLine(line, at) {
 		return
 	}
-	if !bytes.Contains(line, []byte(`"thread"`)) {
+	if !bytes.Contains(line, []byte(`"thread"`)) && !bytes.Contains(line, []byte(`"collabAgentToolCall"`)) {
 		return
 	}
 	var envelope serverLineEnvelope
@@ -236,9 +236,11 @@ func (r *router) observeServerLineAt(line []byte, at time.Time) {
 	}
 	r.observeThreadContainer(envelope.Result)
 	r.observeThreadContainer(envelope.Params)
+	r.observeCollabAgentSpawn(envelope.Result.Item)
+	r.observeCollabAgentSpawn(envelope.Params.Item)
 }
 
-func (r *router) observeThreadContainer(container threadEventContainer) {
+func (r *router) observeThreadContainer(container serverLineContainer) {
 	thread := container.Thread
 	if thread.ID == "" || (thread.Model == "" && thread.ModelProvider == "" && container.Model == "") {
 		return
@@ -253,20 +255,54 @@ func (r *router) observeThreadContainer(container threadEventContainer) {
 	}
 }
 
+func (r *router) observeCollabAgentSpawn(item collabAgentToolCallFields) {
+	if item.Type != "collabAgentToolCall" || item.Tool != "spawnAgent" {
+		return
+	}
+
+	model := item.Model
+	provider := ""
+	if model == "" {
+		parent := r.bindingForThread(item.SenderThreadID)
+		model = parent.model
+		provider = parent.provider
+	}
+	if model == "" {
+		return
+	}
+	if provider == "" {
+		provider = r.cfg.providerFor(model)
+	}
+	for _, threadID := range item.ReceiverThreadIDs {
+		if threadID != "" {
+			r.bindings.set(threadID, model, provider)
+		}
+	}
+}
+
 type threadFields struct {
 	ID            string `json:"id"`
 	Model         string `json:"model"`
 	ModelProvider string `json:"modelProvider"`
 }
 
-type threadEventContainer struct {
-	Thread threadFields `json:"thread"`
-	Model  string       `json:"model"`
+type collabAgentToolCallFields struct {
+	Type              string   `json:"type"`
+	Tool              string   `json:"tool"`
+	Model             string   `json:"model"`
+	SenderThreadID    string   `json:"senderThreadId"`
+	ReceiverThreadIDs []string `json:"receiverThreadIds"`
+}
+
+type serverLineContainer struct {
+	Thread threadFields              `json:"thread"`
+	Model  string                    `json:"model"`
+	Item   collabAgentToolCallFields `json:"item"`
 }
 
 type serverLineEnvelope struct {
-	Result threadEventContainer `json:"result"`
-	Params threadEventContainer `json:"params"`
+	Result serverLineContainer `json:"result"`
+	Params serverLineContainer `json:"params"`
 }
 
 func (r *router) bindingForThread(threadID string) threadBinding {
