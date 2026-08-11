@@ -8,12 +8,16 @@ import (
 )
 
 func completeTurn(store *statsStore, threadID, turnID, model string, tokens uint64, at time.Time) {
+	completeTurnWithDuration(store, threadID, turnID, model, tokens, time.Second, at)
+}
+
+func completeTurnWithDuration(store *statsStore, threadID, turnID, model string, tokens uint64, duration time.Duration, at time.Time) {
 	key := turnKey{threadID: threadID, turnID: turnID}
-	store.turnStarted(key, at.Add(-time.Second))
+	store.turnStarted(key, at.Add(-duration))
 	store.addUsage(key, &tokenUsageInfo{
 		Total: &tokenUsage{TotalTokens: tokens},
 		Last:  &tokenUsage{OutputTokens: tokens},
-	}, at.Add(-500*time.Millisecond))
+	}, at.Add(-duration/2))
 	store.turnCompleted(key, "completed", model, at)
 }
 
@@ -43,6 +47,22 @@ func TestStatsTurnLifecycle(t *testing.T) {
 	}
 	if model.TokensPerSecond != 15 {
 		t.Fatalf("tokens per second = %v, want 15", model.TokensPerSecond)
+	}
+}
+
+func TestStatsTokenWeightedRate(t *testing.T) {
+	t.Parallel()
+	store := newStatsStore(24*time.Hour, 200)
+	base := time.Unix(1700000000, 0)
+	completeTurnWithDuration(store, "t1", "turn-1", "m", 100, 10*time.Second, base.Add(-time.Minute))
+	completeTurnWithDuration(store, "t2", "turn-2", "m", 900, 30*time.Second, base)
+
+	model := store.snapshotAt(base).Models[0]
+	if got, want := model.TokensPerSecond, 25.0; got != want {
+		t.Fatalf("pooled tokens per second = %v, want %v", got, want)
+	}
+	if got, want := model.TokenWeightedTokensPerSecond, 28.0; got != want {
+		t.Fatalf("token-weighted tokens per second = %v, want %v", got, want)
 	}
 }
 
@@ -331,15 +351,5 @@ func TestFlexibleTimeUnmarshal(t *testing.T) {
 	}
 	if got := rfc3339.Unix(); got != 1700000000 {
 		t.Fatalf("rfc3339 time = %d", got)
-	}
-}
-
-func TestRenderSparkline(t *testing.T) {
-	t.Parallel()
-	if got, want := renderSparkline([]float64{0, 50, 100}), "▁▄█"; got != want {
-		t.Fatalf("sparkline = %q, want %q", got, want)
-	}
-	if got, want := renderSparkline([]float64{0, 0}), "▁▁"; got != want {
-		t.Fatalf("zero sparkline = %q, want %q", got, want)
 	}
 }

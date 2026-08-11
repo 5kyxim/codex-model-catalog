@@ -17,30 +17,88 @@ func TestRenderStatsText(t *testing.T) {
 	t.Parallel()
 	snapshot := statsSnapshot{
 		WindowSeconds: 1800,
+		UpdatedAt:     time.Date(2026, 8, 11, 18, 30, 41, 0, time.Local),
 		Models: []modelStatsSnapshot{
 			{
-				Model:           "deepseek-v4-flash",
-				Samples:         3,
-				OutputTokens:    120,
-				TokensPerSecond: 40,
-				WindowStart:     time.Unix(1700000000, 0),
-				WindowEnd:       time.Unix(1700000180, 0),
+				Model:                        "deepseek-v4-flash",
+				Samples:                      3,
+				OutputTokens:                 1200,
+				TokensPerSecond:              35,
+				TokenWeightedTokensPerSecond: 40,
+				WindowStart:                  time.Unix(1700000000, 0),
+				WindowEnd:                    time.Unix(1700000180, 0),
+			},
+			{
+				Model:                        "gpt-5.6-sol",
+				Samples:                      5,
+				OutputTokens:                 2400,
+				TokensPerSecond:              18,
+				TokenWeightedTokensPerSecond: 20,
 			},
 		},
 	}
 	text := renderStatsText(snapshot)
-	for _, want := range []string{"deepseek-v4-flash", "40.0", "120", "30m history"} {
+	for _, want := range []string{
+		"TOKEN SPEED · LAST 30 MINUTES",
+		"Token-weighted average · updated 18:30:41",
+		"RELATIVE SPEED",
+		"deepseek-v4-flash",
+		"40.0",
+		"1,200",
+		"8 runs · 3,600 output tokens",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stats text missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Index(text, "gpt-5.6-sol") > strings.Index(text, "deepseek-v4-flash") {
+		t.Fatalf("stats text is not sorted by output tokens:\n%s", text)
 	}
 }
 
 func TestRenderStatsTextEmpty(t *testing.T) {
 	t.Parallel()
 	text := renderStatsText(statsSnapshot{WindowSeconds: 1800})
-	if !strings.Contains(text, "no completed turns") {
+	if !strings.Contains(text, "No completed runs") {
 		t.Fatalf("empty stats text = %q", text)
+	}
+}
+
+func TestRenderRelativeBar(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value float64
+		max   float64
+		width int
+		want  string
+	}{
+		{name: "maximum", value: 100, max: 100, width: 8, want: "████████"},
+		{name: "half", value: 50, max: 100, width: 8, want: "████"},
+		{name: "minimum visible", value: 1, max: 100, width: 1, want: "▏"},
+		{name: "no speed", value: 0, max: 100, width: 8, want: "—"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := renderRelativeBar(test.value, test.max, test.width); got != test.want {
+				t.Fatalf("renderRelativeBar() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestFormatUint(t *testing.T) {
+	t.Parallel()
+	for value, want := range map[uint64]string{
+		0:       "0",
+		999:     "999",
+		1000:    "1,000",
+		679312:  "679,312",
+		1000000: "1,000,000",
+	} {
+		if got := formatUint(value); got != want {
+			t.Fatalf("formatUint(%d) = %q, want %q", value, got, want)
+		}
 	}
 }
 
@@ -107,7 +165,7 @@ func TestStartStatsServerServesAndCleansUp(t *testing.T) {
 	defer resp.Body.Close()
 	body := make([]byte, 4096)
 	n, _ := resp.Body.Read(body)
-	if resp.StatusCode != 200 || !strings.Contains(string(body[:n]), "no completed turns") {
+	if resp.StatusCode != 200 || !strings.Contains(string(body[:n]), "No completed runs") {
 		t.Fatalf("status = %d body = %q", resp.StatusCode, body[:n])
 	}
 

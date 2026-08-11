@@ -118,14 +118,15 @@ type rateWindowSnapshot struct {
 
 // modelStatsSnapshot is one model's rolling token-speed summary.
 type modelStatsSnapshot struct {
-	Model           string               `json:"model"`
-	Samples         int                  `json:"samples"`
-	OutputTokens    uint64               `json:"output_tokens"`
-	TokensPerSecond float64              `json:"tokens_per_second"`
-	WindowStart     time.Time            `json:"window_start"`
-	WindowEnd       time.Time            `json:"window_end"`
-	Windows         []rateWindowSnapshot `json:"windows,omitempty"`
-	Sparkline       []float64            `json:"sparkline,omitempty"`
+	Model                        string               `json:"model"`
+	Samples                      int                  `json:"samples"`
+	OutputTokens                 uint64               `json:"output_tokens"`
+	TokensPerSecond              float64              `json:"tokens_per_second"`
+	TokenWeightedTokensPerSecond float64              `json:"token_weighted_tokens_per_second"`
+	WindowStart                  time.Time            `json:"window_start"`
+	WindowEnd                    time.Time            `json:"window_end"`
+	Windows                      []rateWindowSnapshot `json:"windows,omitempty"`
+	Sparkline                    []float64            `json:"sparkline,omitempty"`
 }
 
 // statsSnapshot is the complete read-only view served over the unix socket.
@@ -169,11 +170,12 @@ type statsLogRecord struct {
 }
 
 type statsAggregate struct {
-	samples  int
-	tokens   uint64
-	duration time.Duration
-	start    time.Time
-	end      time.Time
+	samples           int
+	tokens            uint64
+	duration          time.Duration
+	weightedRateTotal float64
+	start             time.Time
+	end               time.Time
 }
 
 func newDefaultStatsStore() *statsStore {
@@ -476,6 +478,10 @@ func (s *statsStore) snapshotAt(at time.Time) statsSnapshot {
 			agg.samples++
 			agg.tokens += sample.outputTokens
 			agg.duration += sample.duration
+			if sample.duration > 0 {
+				rate := float64(sample.outputTokens) / sample.duration.Seconds()
+				agg.weightedRateTotal += rate * float64(sample.outputTokens)
+			}
 			if agg.start.IsZero() || sample.endedAt.Before(agg.start) {
 				agg.start = sample.endedAt
 			}
@@ -519,14 +525,15 @@ func (s *statsStore) snapshotAt(at time.Time) statsSnapshot {
 			sparkline[i] = float64(tokens) / 60
 		}
 		models = append(models, modelStatsSnapshot{
-			Model:           model,
-			Samples:         agg.total.samples,
-			OutputTokens:    agg.total.tokens,
-			TokensPerSecond: perSecond,
-			WindowStart:     agg.total.start,
-			WindowEnd:       agg.total.end,
-			Windows:         windows,
-			Sparkline:       sparkline,
+			Model:                        model,
+			Samples:                      agg.total.samples,
+			OutputTokens:                 agg.total.tokens,
+			TokensPerSecond:              perSecond,
+			TokenWeightedTokensPerSecond: tokenWeightedRate(agg.total),
+			WindowStart:                  agg.total.start,
+			WindowEnd:                    agg.total.end,
+			Windows:                      windows,
+			Sparkline:                    sparkline,
 		})
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Model < models[j].Model })
@@ -543,6 +550,13 @@ func pooledRate(agg statsAggregate) float64 {
 		return 0
 	}
 	return float64(agg.tokens) / agg.duration.Seconds()
+}
+
+func tokenWeightedRate(agg statsAggregate) float64 {
+	if agg.tokens == 0 {
+		return 0
+	}
+	return agg.weightedRateTotal / float64(agg.tokens)
 }
 
 // useLog loads prior completed-turn samples from a JSONL log and makes the

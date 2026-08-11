@@ -3,10 +3,13 @@ package modelcatalog
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -108,27 +111,46 @@ func (s *statsServer) Close() error {
 
 func renderStatsText(snapshot statsSnapshot) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "codex-model-catalog token speed (%s history, updated %s)\n",
-		formatDuration(time.Duration(snapshot.WindowSeconds)*time.Second),
+	fmt.Fprintf(&b, "TOKEN SPEED · LAST %s\n",
+		formatHistoryDuration(time.Duration(snapshot.WindowSeconds)*time.Second))
+	fmt.Fprintf(&b, "Token-weighted average · updated %s\n",
 		snapshot.UpdatedAt.Local().Format("15:04:05"))
 	if len(snapshot.Models) == 0 {
-		b.WriteString("no completed turns with token usage recorded yet\n")
+		b.WriteString("\nNo completed runs with token usage recorded yet.\n")
 		return b.String()
 	}
+
+	models := append([]modelStatsSnapshot(nil), snapshot.Models...)
+	sort.SliceStable(models, func(i, j int) bool {
+		if models[i].OutputTokens == models[j].OutputTokens {
+			return models[i].Model < models[j].Model
+		}
+		return models[i].OutputTokens > models[j].OutputTokens
+	})
+
+	maxRate := 0.0
+	var totalTokens uint64
+	totalRuns := 0
+	for _, model := range models {
+		maxRate = max(maxRate, model.TokenWeightedTokensPerSecond)
+		totalTokens += model.OutputTokens
+		totalRuns += model.Samples
+	}
+
+	b.WriteByte('\n')
 	writer := tabwriter.NewWriter(&b, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "MODEL\t15M TOK/S\t1H TOK/S\t6H TOK/S\t24H TOK/S\tSAMPLES\tTOKENS\t24H SPARK (TOK/MIN)")
-	for _, model := range snapshot.Models {
-		fmt.Fprintf(writer, "%s\t%.1f\t%.1f\t%.1f\t%.1f\t%d\t%d\t%s\n",
+	fmt.Fprintln(writer, "#\tMODEL\tRELATIVE SPEED\tTOK/S\tTOKENS\tRUNS")
+	for i, model := range models {
+		fmt.Fprintf(writer, "%d\t%s\t%s\t%.1f\t%s\t%d\n",
+			i+1,
 			model.Model,
-			windowRate(model, "15m"),
-			windowRate(model, "1h"),
-			windowRate(model, "6h"),
-			windowRate(model, "24h"),
-			model.Samples,
-			model.OutputTokens,
-			renderSparkline(model.Sparkline))
+			renderRelativeBar(model.TokenWeightedTokensPerSecond, maxRate, 24),
+			model.TokenWeightedTokensPerSecond,
+			formatUint(model.OutputTokens),
+			model.Samples)
 	}
 	_ = writer.Flush()
+	fmt.Fprintf(&b, "\n%d runs · %s output tokens\n", totalRuns, formatUint(totalTokens))
 	return b.String()
 }
 
@@ -141,40 +163,64 @@ func windowRate(model modelStatsSnapshot, label string) float64 {
 	return model.TokensPerSecond
 }
 
-func renderSparkline(values []float64) string {
-	if len(values) == 0 {
-		return ""
+func renderRelativeBar(value, maximum float64, width int) string {
+	if value <= 0 || maximum <= 0 || width <= 0 {
+		return "—"
 	}
-	sparkChars := []rune("▁▂▃▄▅▆▇█")
-	max := 0.0
-	for _, value := range values {
-		if value > max {
-			max = value
-		}
+	const unitsPerBlock = 8
+	units := int(math.Round(value / maximum * float64(width*unitsPerBlock)))
+	if units < 1 {
+		units = 1
 	}
-	if max <= 0 {
-		return strings.Repeat("▁", len(values))
+	if units > width*unitsPerBlock {
+		units = width * unitsPerBlock
 	}
-	var b strings.Builder
-	for _, value := range values {
-		index := int(value / max * float64(len(sparkChars)-1))
-		if index < 0 {
-			index = 0
-		}
-		if index >= len(sparkChars) {
-			index = len(sparkChars) - 1
-		}
-		b.WriteRune(sparkChars[index])
+
+	fullBlocks := units / unitsPerBlock
+	partialBlock := units % unitsPerBlock
+	bar := strings.Repeat("█", fullBlocks)
+	if partialBlock > 0 {
+		bar += string([]rune("▏▎▍▌▋▊▉")[partialBlock-1])
 	}
-	return b.String()
+	return bar
 }
 
-func formatDuration(duration time.Duration) string {
+func formatHistoryDuration(duration time.Duration) string {
 	if duration%time.Hour == 0 {
-		return fmt.Sprintf("%dh", int(duration/time.Hour))
+		hours := int(duration / time.Hour)
+		unit := "HOUR"
+		if hours != 1 {
+			unit = "HOURS"
+		}
+		return fmt.Sprintf("%d %s", hours, unit)
 	}
 	if duration%time.Minute == 0 {
-		return fmt.Sprintf("%dm", int(duration/time.Minute))
+		minutes := int(duration / time.Minute)
+		unit := "MINUTE"
+		if minutes != 1 {
+			unit = "MINUTES"
+		}
+		return fmt.Sprintf("%d %s", minutes, unit)
 	}
-	return duration.Round(time.Second).String()
+	return strings.ToUpper(duration.Round(time.Second).String())
+}
+
+func formatUint(value uint64) string {
+	digits := strconv.FormatUint(value, 10)
+	if len(digits) <= 3 {
+		return digits
+	}
+
+	firstGroup := len(digits) % 3
+	if firstGroup == 0 {
+		firstGroup = 3
+	}
+	var b strings.Builder
+	b.Grow(len(digits) + (len(digits)-1)/3)
+	b.WriteString(digits[:firstGroup])
+	for i := firstGroup; i < len(digits); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(digits[i : i+3])
+	}
+	return b.String()
 }

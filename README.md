@@ -224,7 +224,7 @@ open ~/Applications/Codex\ Model\ Launcher.app
 curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/stats
 ```
 
-默认输出按模型分组的 terminal 友好表格；请求头带 `Accept: application/json` 时返回 JSON。
+默认输出按模型分组的 terminal 排行榜；请求头带 `Accept: application/json` 时返回 JSON。
 
 排查事件链路时可以用 `/debug` 查看 wrapper 实际观察到的通知次数：
 
@@ -242,10 +242,12 @@ curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/debug
 
 - 保留最近 24 小时、最多 10,000 个已完成回合，落盘到
   `~/.codex/codex-model-catalog-stats.jsonl`（仅 `0600` 权限），重启不丢；
-- 每列速率是窗口内「输出 token（含 reasoning）总数 ÷ 回合总时长」的合并速率，
-  不是各回合速率的简单平均，避免短回合把数字拉高；
-- 表格同时给出 `15m / 1h / 6h / 24h` 四档速率，以及 24 个一小时的
-  `token/min` sparkline，方便同时看“最近”和“过去一天”的变化；
+- terminal 排行榜展示过去 24 小时的 token 加权平均速度：每个回合的 `tok/s`
+  按该回合输出 token 数加权，输出越多的回合对结果影响越大；
+- 排行榜按输出 token 总数降序，`RELATIVE SPEED` 以最快模型为基准显示相对长度，
+  `TOKENS` 和 `RUNS` 分别表示参与计算的输出 token 与已完成回合数；
+- JSON 保留原有的合并速率、`15m / 1h / 6h / 24h` 四档窗口和 24 个一小时的
+  `token/min` sparkline，并新增 `token_weighted_tokens_per_second`；
 - 日志只记录模型、token 数、回合时长和结束时间，不记录 prompt 或输出原文。
 
 ## 文件
