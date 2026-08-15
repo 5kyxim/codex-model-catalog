@@ -81,7 +81,7 @@ Rules:
 
 - Keep `version` equal to `1`.
 - Keep `default_provider` equal to `openai` so unconfigured built-in models continue using the ChatGPT subscription.
-- `expose_hidden_models` is optional and defaults to `false`. Set it to `true` only when the user explicitly wants every upstream model with `visibility: "hide"` exposed in the picker. It does not change API support or server-side access.
+- `expose_hidden_models` is optional and defaults to `false`. Set it to `true` only when the user explicitly wants every upstream model with `visibility: "hide"` rewritten to `list` in the generated catalog. It does not change API support or server-side access, and the Codex App may still filter dedicated internal model IDs such as `codex-auto-review`.
 - The key under `models` is the model ID. Never add `slug` inside `catalog`.
 - `provider` must exactly match the Provider ID in `config.toml`.
 - `catalog.display_name` is required.

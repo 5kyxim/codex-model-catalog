@@ -15,6 +15,7 @@
   - [使用 LLM 生成配置](#使用-llm-生成配置)
   - [1. Provider](#1-provider)
   - [2. 模型目录与路由](#2-模型目录与路由)
+  - [显示隐藏模型](#显示隐藏模型)
   - [示例：OpenCode Go](#示例opencode-go)
   - [`none` 与 Non-think](#none-与-non-think)
 - [检查并启动](#检查并启动)
@@ -161,11 +162,29 @@ experimental_bearer_token = "YOUR_API_KEY"
 - `catalog` 会覆盖内置模型模板的同名字段，可声明上下文窗口、输入类型和工具能力等模型差异。
 - `reasoning_effort_map` 可选，用于把 Codex 的思考等级映射为上游接受的值；不配置时原样转发。
 - `default_provider` 保持为 `openai`，未配置的内置模型继续使用 ChatGPT 订阅。
-- `expose_hidden_models` 可选，默认为 `false`。设为 `true` 后，生成目录时会把上游缓存中所有 `visibility: "hide"` 的模型改为 `list`，无需为每个隐藏模型重复配置。
-
-`expose_hidden_models` 只影响模型选择器可见性，不会修改 `supported_in_api`，也不会绕过账号、工作区或服务端权限。它可能同时显示 `gpt-5.6-sol-wm`、`codex-auto-review` 等内部条目；显示不代表调用一定成功。单模型 `catalog.visibility` 会在全局开关之后应用，因此仍可把指定模型设回 `hide`。
+- `expose_hidden_models` 可选，默认为 `false`。启用方法和限制见下一节。
 
 不在 `config.toml` 中设置全局 `model`，Codex App 就会继续默认选择内置模型。第三方模型需要手动选择。
+
+### 显示隐藏模型
+
+只需把 `~/.codex/model-catalog-routes.json` 中已有的顶层字段设为 `true`，不需要逐个配置隐藏模型，也不要删除现有的 `models` 内容：
+
+```json
+"expose_hidden_models": true
+```
+
+生成目录时，wrapper 会把上游缓存中的 `visibility: "hide"` 改为 `list`。它不会修改 `supported_in_api`，也不会绕过账号、工作区或服务端权限；出现在目录中不代表模型一定可以调用。单模型 `catalog.visibility` 会在全局开关之后应用，因此仍可把指定模型设回 `hide`。
+
+Codex App 还可能按模型 ID 做额外过滤。例如当前版本会固定排除 `codex-auto-review`，所以即使生成目录中的可见性已经是 `list`，它也不会出现在普通模型选择器。`gpt-5.6-sol-wm` 可以通过这个开关显示，但其上游目录当前声明 `supported_in_api: false`。
+
+修改后先刷新目录：
+
+```bash
+~/.codex/bin/codex-model-catalog doctor
+```
+
+然后按 Command-Q 完全退出当前 Codex App，再打开 `~/Applications/Codex Model Launcher.app`。
 
 ### 示例：OpenCode Go
 
@@ -255,6 +274,8 @@ curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/debug
 - JSON 保留原有的合并速率、`15m / 1h / 6h / 24h` 四档窗口和 24 个一小时的
   `token/min` sparkline，并新增 `token_weighted_tokens_per_second`；
 - 日志只记录模型、token 数、回合时长和结束时间，不记录 prompt 或输出原文。
+
+`unknown` 不是一个真实模型名，而是 wrapper 处理回合事件时没有找到对应的模型绑定。修复或升级不会回填已有记录，它们会在 24 小时窗口结束后自然消失；如果完全重启启动器后 `unknown` 仍持续增加，说明当前仍有后台或内部任务没有可用的模型绑定，需要结合 `/debug` 和运行日志继续定位，不能把它当成某个模型的速度。
 
 ## 文件
 
