@@ -227,7 +227,9 @@ func (r *router) observeServerLineAt(line []byte, at time.Time) {
 	if r.stats.observeServerLine(line, at) {
 		return
 	}
-	if !bytes.Contains(line, []byte(`"thread"`)) && !bytes.Contains(line, []byte(`"collabAgentToolCall"`)) {
+	if !bytes.Contains(line, []byte(`"thread"`)) &&
+		!bytes.Contains(line, []byte(`"collabAgentToolCall"`)) &&
+		!bytes.Contains(line, []byte(`"subAgentActivity"`)) {
 		return
 	}
 	var envelope serverLineEnvelope
@@ -238,6 +240,8 @@ func (r *router) observeServerLineAt(line []byte, at time.Time) {
 	r.observeThreadContainer(envelope.Params)
 	r.observeCollabAgentSpawn(envelope.Result.Item)
 	r.observeCollabAgentSpawn(envelope.Params.Item)
+	r.observeSubAgentActivity(envelope.Result)
+	r.observeSubAgentActivity(envelope.Params)
 }
 
 func (r *router) observeThreadContainer(container serverLineContainer) {
@@ -255,7 +259,7 @@ func (r *router) observeThreadContainer(container serverLineContainer) {
 	}
 }
 
-func (r *router) observeCollabAgentSpawn(item collabAgentToolCallFields) {
+func (r *router) observeCollabAgentSpawn(item serverItemFields) {
 	if item.Type != "collabAgentToolCall" || item.Tool != "spawnAgent" {
 		return
 	}
@@ -280,24 +284,47 @@ func (r *router) observeCollabAgentSpawn(item collabAgentToolCallFields) {
 	}
 }
 
+func (r *router) observeSubAgentActivity(container serverLineContainer) {
+	item := container.Item
+	if item.Type != "subAgentActivity" || item.Kind != "started" ||
+		container.ThreadID == "" || item.AgentThreadID == "" {
+		return
+	}
+	if child := r.bindingForThread(item.AgentThreadID); child.model != "" {
+		return
+	}
+
+	parent := r.bindingForThread(container.ThreadID)
+	if parent.model == "" {
+		return
+	}
+	if parent.provider == "" {
+		parent.provider = r.cfg.providerFor(parent.model)
+	}
+	r.bindings.set(item.AgentThreadID, parent.model, parent.provider)
+}
+
 type threadFields struct {
 	ID            string `json:"id"`
 	Model         string `json:"model"`
 	ModelProvider string `json:"modelProvider"`
 }
 
-type collabAgentToolCallFields struct {
+type serverItemFields struct {
 	Type              string   `json:"type"`
 	Tool              string   `json:"tool"`
 	Model             string   `json:"model"`
 	SenderThreadID    string   `json:"senderThreadId"`
 	ReceiverThreadIDs []string `json:"receiverThreadIds"`
+	Kind              string   `json:"kind"`
+	AgentThreadID     string   `json:"agentThreadId"`
 }
 
 type serverLineContainer struct {
-	Thread threadFields              `json:"thread"`
-	Model  string                    `json:"model"`
-	Item   collabAgentToolCallFields `json:"item"`
+	Thread   threadFields     `json:"thread"`
+	ThreadID string           `json:"threadId"`
+	Model    string           `json:"model"`
+	Item     serverItemFields `json:"item"`
 }
 
 type serverLineEnvelope struct {

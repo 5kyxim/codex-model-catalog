@@ -437,6 +437,37 @@ func TestRouterAttributesSubAgentFromInheritedSpawnModel(t *testing.T) {
 	}
 }
 
+func TestRouterAttributesSubAgentFromActivity(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","result":{"thread":{"id":"parent-thread","modelProvider":"third_party"},"model":"custom-reasoning-model"}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"parent-thread","item":{"type":"subAgentActivity","id":"spawn-call","agentThreadId":"child-thread","agentPath":"/root/child","kind":"started"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"child-thread","turn":{"id":"turn-1","status":"inProgress"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"threadId":"child-thread","turnId":"turn-1","tokenUsage":{"total":{"totalTokens":100},"last":{"outputTokens":20,"reasoningOutputTokens":10}}}}`+"\n"), base.Add(time.Second))
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"child-thread","turn":{"id":"turn-1","status":"completed"}}}`+"\n"), base.Add(2*time.Second))
+
+	snapshot := router.stats.snapshotAt(base.Add(2 * time.Second))
+	if len(snapshot.Models) != 1 || snapshot.Models[0].Model != testModelID {
+		t.Fatalf("models = %#v, want sub-agent activity model %q", snapshot.Models, testModelID)
+	}
+}
+
+func TestRouterSubAgentActivityPreservesExplicitSpawnModel(t *testing.T) {
+	t.Parallel()
+	router := testRouter()
+	base := time.Unix(1700000000, 0)
+
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","result":{"thread":{"id":"parent-thread","modelProvider":"third_party"},"model":"custom-reasoning-model"}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"type":"collabAgentToolCall","tool":"spawnAgent","senderThreadId":"parent-thread","receiverThreadIds":["child-thread"],"model":"explicit-child-model"}}}`+"\n"), base)
+	router.observeServerLineAt([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"parent-thread","item":{"type":"subAgentActivity","id":"spawn-call","agentThreadId":"child-thread","agentPath":"/root/child","kind":"started"}}}`+"\n"), base)
+
+	if got := router.bindingForThread("child-thread").model; got != "explicit-child-model" {
+		t.Fatalf("child model = %q, want explicit spawn model", got)
+	}
+}
+
 func TestRouterBindsModelFromTurnStart(t *testing.T) {
 	t.Parallel()
 	router := testRouter()
