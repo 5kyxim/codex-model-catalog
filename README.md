@@ -275,7 +275,7 @@ curl --unix-socket ~/.codex/codex-model-catalog.sock http://localhost/debug
   `token/min` sparkline，并新增 `token_weighted_tokens_per_second`；
 - 日志只记录模型、token 数、回合时长和结束时间，不记录 prompt 或输出原文。
 
-`unknown` 不是一个真实模型名，而是 wrapper 处理回合事件时没有找到对应的模型绑定。修复或升级不会回填已有记录，它们会在 24 小时窗口结束后自然消失；如果完全重启启动器后 `unknown` 仍持续增加，说明当前仍有后台或内部任务没有可用的模型绑定，需要结合 `/debug` 和运行日志继续定位，不能把它当成某个模型的速度。
+`unknown` 不是一个真实模型名，而是 wrapper 收到回合完成事件时该线程还没有模型绑定。已知的子代理路径（`collabAgentToolCall` 的 `receiverThreadIds`、`subAgentActivity` 的子线程）已绑定到显式模型或父线程模型；升级不会回填已有记录，旧记录会在 24 小时窗口结束后自然消失。如果更新到包含该修复的版本并完全重启启动器后 `unknown` 仍持续增加，说明还有未覆盖的事件路径，需要结合 `/debug` 和运行日志继续定位，不能把它当成某个模型的速度。
 
 ## 文件
 
