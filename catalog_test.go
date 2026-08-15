@@ -101,6 +101,102 @@ func TestRefreshCatalogPreservesCachedModelsAndAddsConfiguredModel(t *testing.T)
 	}
 }
 
+func TestRefreshCatalogExposesHiddenModelsWhenConfigured(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "models_cache.json")
+	catalogPath := filepath.Join(dir, "model-catalog.json")
+	cache := `{
+  "models": [
+    {
+      "slug": "hidden-native-model",
+      "display_name": "Hidden Native Model",
+      "visibility": "hide",
+      "supported_in_api": false
+    },
+    {
+      "slug": "listed-native-model",
+      "display_name": "Listed Native Model",
+      "visibility": "list"
+    }
+  ]
+}`
+	if err := os.WriteFile(cachePath, []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testCatalogConfig()
+	cfg.ExposeHiddenModels = true
+	if _, err := refreshCatalog(cachePath, catalogPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	models := root["models"].([]any)
+	hidden := models[0].(map[string]any)
+	if hidden["visibility"] != "list" {
+		t.Fatalf("hidden model visibility = %#v, want list", hidden["visibility"])
+	}
+	if hidden["supported_in_api"] != false {
+		t.Fatalf("hidden model API support changed: %#v", hidden["supported_in_api"])
+	}
+	if listed := models[1].(map[string]any); listed["visibility"] != "list" {
+		t.Fatalf("listed model visibility = %#v, want list", listed["visibility"])
+	}
+}
+
+func TestRefreshCatalogExplicitVisibilityOverridesHiddenExposure(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "models_cache.json")
+	catalogPath := filepath.Join(dir, "model-catalog.json")
+	cache := `{
+  "models": [
+    {
+      "slug": "hidden-native-model",
+      "display_name": "Hidden Native Model",
+      "visibility": "hide"
+    }
+  ]
+}`
+	if err := os.WriteFile(cachePath, []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testCatalogConfig()
+	cfg.ExposeHiddenModels = true
+	cfg.Models["hidden-native-model"] = modelSpec{
+		Provider: "openai",
+		Catalog: map[string]any{
+			"display_name": "Hidden Native Model",
+			"visibility":   "hide",
+		},
+	}
+	if _, err := refreshCatalog(cachePath, catalogPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	model := root["models"].([]any)[0].(map[string]any)
+	if model["visibility"] != "hide" {
+		t.Fatalf("configured visibility = %#v, want hide", model["visibility"])
+	}
+}
+
 func TestRefreshCatalogFallsBackToExistingCatalog(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -46,6 +46,9 @@ func refreshCatalog(cachePath, catalogPath string, cfg catalogConfig) (int, erro
 			return useExistingCatalog(catalogPath, cfg, errors.New("model cache contains a model without a slug"))
 		}
 		seen[slug] = true
+		if cfg.ExposeHiddenModels && model["visibility"] == "hide" {
+			model["visibility"] = "list"
+		}
 
 		spec, configured := cfg.model(slug)
 		if !configured {

@@ -48,6 +48,7 @@ Add or merge the model into `~/.codex/model-catalog-routes.json` using this sche
 {
   "version": 1,
   "default_provider": "openai",
+  "expose_hidden_models": false,
   "models": {
     "<model_id>": {
       "provider": "<provider_id>",
@@ -80,6 +81,7 @@ Rules:
 
 - Keep `version` equal to `1`.
 - Keep `default_provider` equal to `openai` so unconfigured built-in models continue using the ChatGPT subscription.
+- `expose_hidden_models` is optional and defaults to `false`. Set it to `true` only when the user explicitly wants every upstream model with `visibility: "hide"` exposed in the picker. It does not change API support or server-side access.
 - The key under `models` is the model ID. Never add `slug` inside `catalog`.
 - `provider` must exactly match the Provider ID in `config.toml`.
 - `catalog.display_name` is required.

@@ -127,6 +127,7 @@ experimental_bearer_token = "YOUR_API_KEY"
 {
   "version": 1,
   "default_provider": "openai",
+  "expose_hidden_models": false,
   "models": {
     "model-id": {
       "provider": "provider_id",
@@ -160,6 +161,9 @@ experimental_bearer_token = "YOUR_API_KEY"
 - `catalog` 会覆盖内置模型模板的同名字段，可声明上下文窗口、输入类型和工具能力等模型差异。
 - `reasoning_effort_map` 可选，用于把 Codex 的思考等级映射为上游接受的值；不配置时原样转发。
 - `default_provider` 保持为 `openai`，未配置的内置模型继续使用 ChatGPT 订阅。
+- `expose_hidden_models` 可选，默认为 `false`。设为 `true` 后，生成目录时会把上游缓存中所有 `visibility: "hide"` 的模型改为 `list`，无需为每个隐藏模型重复配置。
+
+`expose_hidden_models` 只影响模型选择器可见性，不会修改 `supported_in_api`，也不会绕过账号、工作区或服务端权限。它可能同时显示 `gpt-5.6-sol-wm`、`codex-auto-review` 等内部条目；显示不代表调用一定成功。单模型 `catalog.visibility` 会在全局开关之后应用，因此仍可把指定模型设回 `hide`。
 
 不在 `config.toml` 中设置全局 `model`，Codex App 就会继续默认选择内置模型。第三方模型需要手动选择。
 

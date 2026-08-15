@@ -10,9 +10,10 @@ import (
 const catalogConfigVersion = 1
 
 type catalogConfig struct {
-	Version         int                  `json:"version"`
-	DefaultProvider string               `json:"default_provider"`
-	Models          map[string]modelSpec `json:"models"`
+	Version            int                  `json:"version"`
+	DefaultProvider    string               `json:"default_provider"`
+	ExposeHiddenModels bool                 `json:"expose_hidden_models,omitempty"`
+	Models             map[string]modelSpec `json:"models"`
 }
 
 type modelSpec struct {

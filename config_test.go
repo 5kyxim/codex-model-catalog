@@ -58,6 +58,7 @@ func TestLoadCatalogConfig(t *testing.T) {
 	data := []byte(`{
   "version": 1,
   "default_provider": "openai",
+  "expose_hidden_models": true,
   "models": {
     "custom-reasoning-model": {
       "provider": "third_party",
@@ -88,6 +89,9 @@ func TestLoadCatalogConfig(t *testing.T) {
 	}
 	if got, ok := cfg.Models[testModelID].normalizeEffort("xhigh"); !ok || got != "high" {
 		t.Fatalf("normalizeEffort(xhigh) = %q, %v", got, ok)
+	}
+	if !cfg.ExposeHiddenModels {
+		t.Fatal("expose_hidden_models was not loaded")
 	}
 }
 

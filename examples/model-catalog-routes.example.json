@@ -1,6 +1,7 @@
 {
   "version": 1,
   "default_provider": "openai",
+  "expose_hidden_models": false,
   "models": {
     "deepseek-v4-flash": {
       "provider": "opencode_go",
