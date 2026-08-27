@@ -114,9 +114,9 @@ func requireExecutable(path string) error {
 func insertCatalogOverride(args []string, appServerIndex int, catalogPath string) []string {
 	override := fmt.Sprintf("model_catalog_json=%q", filepath.Clean(catalogPath))
 	result := make([]string, 0, len(args)+2)
-	result = append(result, args[:appServerIndex]...)
+	result = append(result, args[:appServerIndex+1]...)
 	result = append(result, "-c", override)
-	result = append(result, args[appServerIndex:]...)
+	result = append(result, args[appServerIndex+1:]...)
 	return result
 }
 

@@ -2,11 +2,11 @@ package modelcatalog
 
 import "testing"
 
-func TestInsertCatalogOverrideBeforeAppServer(t *testing.T) {
+func TestInsertCatalogOverrideAfterAppServer(t *testing.T) {
 	t.Parallel()
-	args := []string{"--enable", "feature", "app-server", "--stdio"}
+	args := []string{"-c", "features.code_mode_host=true", "app-server", "--analytics-default-enabled", "-c", "mcp_servers.codex_app={}"}
 	got := insertCatalogOverride(args, 2, "/tmp/model catalog.json")
-	want := []string{"--enable", "feature", "-c", `model_catalog_json="/tmp/model catalog.json"`, "app-server", "--stdio"}
+	want := []string{"-c", "features.code_mode_host=true", "app-server", "-c", `model_catalog_json="/tmp/model catalog.json"`, "--analytics-default-enabled", "-c", "mcp_servers.codex_app={}"}
 	if len(got) != len(want) {
 		t.Fatalf("args = %#v", got)
 	}
