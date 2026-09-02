@@ -9,6 +9,11 @@ import (
 
 const catalogConfigVersion = 1
 
+const (
+	catalogModeMerge   = "merge"
+	catalogModeReplace = "replace"
+)
+
 type catalogConfig struct {
 	Version            int                  `json:"version"`
 	DefaultProvider    string               `json:"default_provider"`
@@ -18,6 +23,7 @@ type catalogConfig struct {
 
 type modelSpec struct {
 	Provider           string            `json:"provider"`
+	CatalogMode        string            `json:"catalog_mode,omitempty"`
 	Catalog            map[string]any    `json:"catalog"`
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
 }
@@ -56,6 +62,11 @@ func validateModelSpec(model string, spec modelSpec) error {
 	}
 	if spec.Provider == "" {
 		return fmt.Errorf("model %q provider is required", model)
+	}
+	switch spec.CatalogMode {
+	case "", catalogModeMerge, catalogModeReplace:
+	default:
+		return fmt.Errorf("model %q catalog_mode must be %q or %q", model, catalogModeMerge, catalogModeReplace)
 	}
 	if spec.Catalog == nil {
 		return fmt.Errorf("model %q catalog is required", model)

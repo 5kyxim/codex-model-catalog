@@ -101,6 +101,58 @@ func TestRefreshCatalogPreservesCachedModelsAndAddsConfiguredModel(t *testing.T)
 	}
 }
 
+func TestRefreshCatalogReplacesTemplateWhenConfigured(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "models_cache.json")
+	catalogPath := filepath.Join(dir, "model-catalog.json")
+	cache := `{
+  "models": [
+    {
+      "slug": "native-model",
+      "display_name": "Native Model",
+      "base_instructions": "native instructions",
+      "include_plugin_usage_instructions": true,
+      "tool_mode": "code_mode_only"
+    }
+  ]
+}`
+	if err := os.WriteFile(cachePath, []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := testCatalogConfig()
+	spec := cfg.Models[testModelID]
+	spec.CatalogMode = "replace"
+	spec.Catalog["base_instructions"] = ""
+	cfg.Models[testModelID] = spec
+	if _, err := refreshCatalog(cachePath, catalogPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	custom := root["models"].([]any)[1].(map[string]any)
+	if _, ok := custom["include_plugin_usage_instructions"]; ok {
+		t.Fatalf("replacement model inherited plugin metadata: %#v", custom)
+	}
+	if _, ok := custom["tool_mode"]; ok {
+		t.Fatalf("replacement model inherited tool mode: %#v", custom)
+	}
+	if custom["base_instructions"] != "" {
+		t.Fatalf("replacement model instructions = %#v, want empty", custom["base_instructions"])
+	}
+	if custom["multi_agent_version"] != "v1" {
+		t.Fatalf("replacement model multi-agent version = %#v, want v1", custom["multi_agent_version"])
+	}
+}
+
 func TestRefreshCatalogExposesHiddenModelsWhenConfigured(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

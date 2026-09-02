@@ -132,3 +132,26 @@ func TestLoadCatalogConfigRequiresDefaultEffortMapping(t *testing.T) {
 		t.Fatal("expected missing default effort mapping error")
 	}
 }
+
+func TestLoadCatalogConfigRejectsInvalidCatalogMode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	data := []byte(`{
+  "version": 1,
+  "default_provider": "openai",
+  "models": {
+    "custom-model": {
+      "provider": "third_party",
+      "catalog_mode": "unknown",
+      "catalog": {"display_name": "Custom Model"}
+    }
+  }
+}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCatalogConfig(path); err == nil {
+		t.Fatal("expected invalid catalog mode error")
+	}
+}

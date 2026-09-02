@@ -52,6 +52,7 @@ Add or merge the model into `~/.codex/model-catalog-routes.json` using this sche
   "models": {
     "<model_id>": {
       "provider": "<provider_id>",
+      "catalog_mode": "merge",
       "catalog": {
         "display_name": "<display_name>",
         "description": "<provider_name>",
@@ -85,7 +86,8 @@ Rules:
 - The key under `models` is the model ID. Never add `slug` inside `catalog`.
 - `provider` must exactly match the Provider ID in `config.toml`.
 - `catalog.display_name` is required.
-- `catalog` is a top-level overlay on the native Codex model template. Include every verified capability that differs from that template.
+- `catalog_mode` is optional and defaults to `merge`, which overlays `catalog` on the native Codex model template. Use `replace` when the upstream accepts only explicitly declared capabilities; in that mode `catalog` must be a complete model entry and inherits no native tool or instruction metadata.
+- In `merge` mode, include every verified capability that differs from the native template.
 - Add `context_window` and `max_context_window` only when their positive integer values are verified.
 - `web_search_tool_type` must contain a valid Codex value even when search is disabled; use `text` unless another verified value is required.
 - `reasoning_effort_map` is optional. Omit it when Codex effort names can be forwarded unchanged.

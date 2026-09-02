@@ -132,6 +132,7 @@ experimental_bearer_token = "YOUR_API_KEY"
   "models": {
     "model-id": {
       "provider": "provider_id",
+      "catalog_mode": "merge",
       "catalog": {
         "display_name": "Model Name",
         "description": "Provider Name",
@@ -159,7 +160,8 @@ experimental_bearer_token = "YOUR_API_KEY"
 
 - `models` 的键就是模型 ID；不要在 `catalog` 中重复写 `slug`。
 - `provider` 必须与 `config.toml` 中的 Provider ID 一致。
-- `catalog` 会覆盖内置模型模板的同名字段，可声明上下文窗口、输入类型和工具能力等模型差异。
+- `catalog_mode` 可选，默认为 `merge`：先继承内置模型模板，再由 `catalog` 覆盖同名字段。上游只兼容明确声明的能力时设为 `replace`，此时 `catalog` 必须提供完整模型条目，不会继承内置工具或提示词元数据。
+- `catalog` 在 `merge` 模式下覆盖内置模型模板的同名字段，可声明上下文窗口、输入类型和工具能力等模型差异。
 - `reasoning_effort_map` 可选，用于把 Codex 的思考等级映射为上游接受的值；不配置时原样转发。
 - `default_provider` 保持为 `openai`，未配置的内置模型继续使用 ChatGPT 订阅。
 - `expose_hidden_models` 可选，默认为 `false`。启用方法和限制见下一节。

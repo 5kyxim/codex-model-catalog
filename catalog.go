@@ -101,13 +101,15 @@ func catalogTemplate(models []any) (map[string]any, error) {
 }
 
 func modelCatalogEntry(base map[string]any, slug string, spec modelSpec, defaultProvider string) (map[string]any, error) {
-	data, err := json.Marshal(base)
-	if err != nil {
-		return nil, fmt.Errorf("copy catalog template for model %q: %w", slug, err)
-	}
-	var model map[string]any
-	if err := json.Unmarshal(data, &model); err != nil {
-		return nil, fmt.Errorf("copy catalog template for model %q: %w", slug, err)
+	model := make(map[string]any, len(spec.Catalog)+2)
+	if spec.CatalogMode != catalogModeReplace {
+		data, err := json.Marshal(base)
+		if err != nil {
+			return nil, fmt.Errorf("copy catalog template for model %q: %w", slug, err)
+		}
+		if err := json.Unmarshal(data, &model); err != nil {
+			return nil, fmt.Errorf("copy catalog template for model %q: %w", slug, err)
+		}
 	}
 
 	if spec.Provider != defaultProvider {
